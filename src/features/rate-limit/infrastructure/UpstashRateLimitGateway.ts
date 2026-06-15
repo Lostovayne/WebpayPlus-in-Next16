@@ -1,31 +1,7 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import type { RateLimitGateway, RateLimitResult } from "../domain/RateLimitGateway";
-
-/**
- * Parse a human-readable window string into milliseconds.
- *
- * Supported formats:
- * - "10 s"  → 10_000 ms
- * - "1 m"   → 60_000 ms
- * - "1 h"   → 3_600_000 ms
- *
- * Defaults to seconds if no unit suffix is provided.
- */
-function parseWindow(window: string): number {
-  const trimmed = window.trim();
-  const match = trimmed.match(/^(\d+)\s*(s|m|h)?$/);
-
-  if (!match) {
-    throw new Error(`[UpstashRateLimitGateway] Invalid window format: "${window}". Expected "N s", "N m", or "N h".`);
-  }
-
-  const value = Number.parseInt(match[1], 10);
-  const unit = match[2] ?? "s";
-
-  const multipliers: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000 };
-  return value * multipliers[unit];
-}
+import { parseWindow } from "../domain/parseWindow";
 
 /**
  * Upstash Redis adapter for rate limiting.
@@ -33,13 +9,12 @@ function parseWindow(window: string): number {
  * Uses sliding window algorithm via @upstash/ratelimit.
  * Requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN env vars.
  *
- * Each check() call creates a scoped Ratelimit instance for the given
- * window+limit combination. This is correct for Upstash because the
- * limiter config is baked into the instance — you can't change max/window
- * per request on the same instance.
+ * Caches Ratelimit instances by window+limit combination to avoid
+ * re-creating identical limiters on every request.
  */
 export class UpstashRateLimitGateway implements RateLimitGateway {
   private readonly redis: Redis;
+  private readonly limiters = new Map<string, Ratelimit>();
 
   constructor() {
     const url = process.env.UPSTASH_REDIS_REST_URL;
@@ -57,11 +32,18 @@ export class UpstashRateLimitGateway implements RateLimitGateway {
   async check(key: string, window: string, limit: number): Promise<RateLimitResult> {
     const windowMs = parseWindow(window);
 
-    const ratelimit = new Ratelimit({
-      redis: this.redis,
-      limiter: Ratelimit.slidingWindow(limit, `${windowMs} ms`),
-      analytics: false,
-    });
+    // Cache Ratelimit instance by window+limit to avoid per-request allocation
+    const cacheKey = `${windowMs}:${limit}`;
+    let ratelimit = this.limiters.get(cacheKey);
+
+    if (!ratelimit) {
+      ratelimit = new Ratelimit({
+        redis: this.redis,
+        limiter: Ratelimit.slidingWindow(limit, `${windowMs} ms`),
+        analytics: false,
+      });
+      this.limiters.set(cacheKey, ratelimit);
+    }
 
     const result = await ratelimit.limit(key);
 

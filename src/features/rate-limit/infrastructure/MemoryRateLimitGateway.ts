@@ -1,32 +1,8 @@
 import type { RateLimitGateway, RateLimitResult } from "../domain/RateLimitGateway";
+import { parseWindow } from "../domain/parseWindow";
 
 interface WindowEntry {
   timestamps: number[];
-}
-
-/**
- * Parse a human-readable window string into milliseconds.
- *
- * Supported formats:
- * - "10 s"  → 10_000 ms
- * - "1 m"   → 60_000 ms
- * - "1 h"   → 3_600_000 ms
- *
- * Defaults to seconds if no unit suffix is provided.
- */
-function parseWindow(window: string): number {
-  const trimmed = window.trim();
-  const match = trimmed.match(/^(\d+)\s*(s|m|h)?$/);
-
-  if (!match) {
-    throw new Error(`[MemoryRateLimitGateway] Invalid window format: "${window}". Expected "N s", "N m", or "N h".`);
-  }
-
-  const value = Number.parseInt(match[1], 10);
-  const unit = match[2] ?? "s";
-
-  const multipliers: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000 };
-  return value * multipliers[unit];
 }
 
 /**
@@ -55,6 +31,13 @@ export class MemoryRateLimitGateway implements RateLimitGateway {
     // Remove timestamps outside the current window (sliding window eviction)
     entry.timestamps = entry.timestamps.filter((ts) => ts > windowStart);
 
+    // Remove empty entries to prevent unbounded memory growth
+    if (entry.timestamps.length === 0) {
+      this.store.delete(key);
+      entry = { timestamps: [] };
+      this.store.set(key, entry);
+    }
+
     const remaining = Math.max(0, limit - entry.timestamps.length);
     const success = entry.timestamps.length < limit;
 
@@ -70,7 +53,7 @@ export class MemoryRateLimitGateway implements RateLimitGateway {
     return {
       success,
       limit,
-      remaining,
+      remaining: success ? remaining - 1 : remaining,
       reset,
     };
   }
