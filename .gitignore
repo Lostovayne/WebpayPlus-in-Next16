@@ -30,7 +30,6 @@ bun-error.log*
 pnpm-lock.yaml
 yarn.lock
 package-lock.json
-bun.lock
 
 # vercel
 .vercel
