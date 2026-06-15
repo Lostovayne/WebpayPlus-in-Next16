@@ -1,24 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { WebpayTransaction } from "../domain/Transaction";
 
-// ─── Hoisted Variables ────────────────────────────────────────────────────────
+// ─── Mock Variables (module scope — vi.hoisted removed in vitest 4.x) ─────────
 
-const { mockGateway, mockRepoStore } = vi.hoisted(() => {
-  const commitTransactionMock = vi.fn();
-  const getTransactionStatusMock = vi.fn();
-  return {
-    mockGateway: {
-      createTransaction: vi.fn(),
-      commitTransaction: (...args: any[]) => commitTransactionMock(...args),
-      getTransactionStatus: (...args: any[]) => getTransactionStatusMock(...args),
-      requestRefund: vi.fn(),
-      // Expose mocks for configuration
-      _commitTransactionMock: commitTransactionMock,
-      _getTransactionStatusMock: getTransactionStatusMock,
-    },
-    mockRepoStore: new Map<string, WebpayTransaction>(),
-  };
-});
+const commitTransactionMock = vi.fn();
+const getTransactionStatusMock = vi.fn();
+const createTransactionMock = vi.fn();
+
+const mockGateway = {
+  createTransaction: (...args: any[]) => createTransactionMock(...args),
+  commitTransaction: (...args: any[]) => commitTransactionMock(...args),
+  getTransactionStatus: (...args: any[]) => getTransactionStatusMock(...args),
+  requestRefund: vi.fn(),
+  // Expose mocks for configuration
+  _commitTransactionMock: commitTransactionMock,
+  _getTransactionStatusMock: getTransactionStatusMock,
+  _createTransactionMock: createTransactionMock,
+};
+
+const mockRepoStore = new Map<string, WebpayTransaction>();
 
 // ─── Mock Modules ─────────────────────────────────────────────────────────────
 
@@ -70,12 +70,15 @@ vi.mock("next/navigation", () => ({
 // ─── Import Actions + DI helpers ──────────────────────────────────────────────
 
 import {
+  initiateTransactionAction,
   confirmTransactionAction,
   abortTransactionAction,
+  pollStaleTransactionsAction,
   __setGatewayForTesting,
   __resetGatewayForTesting,
 } from "./transactionActions";
 import { TransbankAlreadyProcessedError } from "../infrastructure/TransbankGateway";
+import { redirect } from "next/navigation";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -267,5 +270,260 @@ describe("abortTransactionAction", () => {
 
     const updated = mockRepoStore.get(tx.props.id);
     expect(updated!.props.status).toBe("AUTHORIZED");
+  });
+});
+
+describe("initiateTransactionAction", () => {
+  describe("Happy path", () => {
+    it("creates transaction, persists to DB, calls Transbank, and redirects", async () => {
+      mockGateway._createTransactionMock.mockResolvedValueOnce({
+        token: "tbk_new_token_123",
+        url: "https://webpay3g.transbank.cl/webpayserver/init_transaction",
+      });
+
+      await expect(initiateTransactionAction(5000)).rejects.toThrow("NEXT_REDIRECT");
+
+      // Verify transaction was persisted
+      const allTx = Array.from(mockRepoStore.values());
+      expect(allTx).toHaveLength(1);
+      const tx = allTx[0];
+      expect(tx.props.amount).toBe(5000);
+      expect(tx.props.status).toBe("INITIALIZED");
+      expect(tx.props.token).toBe("tbk_new_token_123");
+
+      // Verify redirect was called with correct URL
+      expect(redirect).toHaveBeenCalledWith(
+        expect.stringContaining("https://webpay3g.transbank.cl/webpayserver/init_transaction?token_ws=tbk_new_token_123"),
+      );
+    });
+
+    it("generates unique buy_order with BO prefix", async () => {
+      mockGateway._createTransactionMock.mockResolvedValueOnce({
+        token: "token_1",
+        url: "https://webpay3g.transbank.cl/webpayserver/init_transaction",
+      });
+
+      await expect(initiateTransactionAction(5000)).rejects.toThrow("NEXT_REDIRECT");
+
+      const allTx = Array.from(mockRepoStore.values());
+      expect(allTx[0].props.buyOrder).toMatch(/^BO[A-F0-9]{20}$/);
+    });
+  });
+
+  describe("Amount validation", () => {
+    it("throws when amount is zero", async () => {
+      await expect(initiateTransactionAction(0)).rejects.toThrow("Monto inválido");
+    });
+
+    it("throws when amount is negative", async () => {
+      await expect(initiateTransactionAction(-1000)).rejects.toThrow("Monto inválido");
+    });
+
+    it("accepts maximum valid amount (999,999,999)", async () => {
+      mockGateway._createTransactionMock.mockResolvedValueOnce({
+        token: "token_max",
+        url: "https://webpay3g.transbank.cl/webpayserver/init_transaction",
+      });
+
+      await expect(initiateTransactionAction(999_999_999)).rejects.toThrow("NEXT_REDIRECT");
+
+      const allTx = Array.from(mockRepoStore.values());
+      expect(allTx[0].props.amount).toBe(999_999_999);
+    });
+  });
+
+  describe("Transbank failure", () => {
+    it("marks transaction as FAILED and throws when Transbank rejects", async () => {
+      mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
+
+      await expect(initiateTransactionAction(5000)).rejects.toThrow("Fallo al inicializar Gateway");
+
+      const allTx = Array.from(mockRepoStore.values());
+      expect(allTx).toHaveLength(1);
+      expect(allTx[0].props.status).toBe("FAILED");
+    });
+
+    it("persists transaction BEFORE calling Transbank (traceability)", async () => {
+      // First call: Transbank fails
+      mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
+
+      await expect(initiateTransactionAction(5000)).rejects.toThrow("Fallo al inicializar Gateway");
+
+      // Transaction should exist in DB even though Transbank failed
+      const allTx = Array.from(mockRepoStore.values());
+      expect(allTx).toHaveLength(1);
+      expect(allTx[0].props.status).toBe("FAILED");
+    });
+  });
+});
+
+describe("confirmTransactionAction - Additional cases", () => {
+  it("422 → getTransactionStatus → REJECTED (fallback to rejected status)", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_test_123");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockRejectedValueOnce(
+      new TransbankAlreadyProcessedError("tok_test_123"),
+    );
+    mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
+      vci: "TSO", amount: 5000, status: "REJECTED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "0101",
+      transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "",
+      payment_type_code: "VD", response_code: -1, installments_number: 1,
+    });
+
+    const result = await confirmTransactionAction("tok_test_123");
+
+    expect(result.status).toBe("REJECTED");
+    expect(result.responseCode).toBe(-1);
+    expect(mockGateway._getTransactionStatusMock).toHaveBeenCalledWith("tok_test_123");
+  });
+
+  it("422 → getTransactionStatus throws → marks as FAILED (error propagates to outer catch)", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_test_123");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockRejectedValueOnce(
+      new TransbankAlreadyProcessedError("tok_test_123"),
+    );
+    mockGateway._getTransactionStatusMock.mockRejectedValueOnce(new Error("Network error"));
+
+    const result = await confirmTransactionAction("tok_test_123");
+
+    // When getTransactionStatus throws inside the 422 handler, the error
+    // propagates to the outer catch which marks as FAILED (not a TransbankAlreadyProcessedError)
+    expect(result.status).toBe("FAILED");
+  });
+});
+
+describe("pollStaleTransactionsAction", () => {
+  describe("Stale transactions found", () => {
+    it("processes stale transactions and updates status to AUTHORIZED", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      tx.setToken("tok_stale_1");
+      // Make it stale (>10 minutes old)
+      tx.props.createdAt = new Date(Date.now() - 15 * 60 * 1000);
+      seed(tx);
+
+      mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
+        vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+        session_id: "session-1", accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
+        payment_type_code: "VD", response_code: 0, installments_number: 1,
+      });
+
+      const result = await pollStaleTransactionsAction();
+
+      expect(result.processed).toBe(1);
+      expect(result.authorized).toBe(1);
+      expect(result.rejected).toBe(0);
+      expect(result.failed).toBe(0);
+
+      const updated = mockRepoStore.get(tx.props.id);
+      expect(updated!.props.status).toBe("AUTHORIZED");
+      expect(updated!.props.polledAt).toBeDefined();
+    });
+
+    it("updates status to REJECTED when Transbank rejects", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      tx.setToken("tok_stale_2");
+      tx.props.createdAt = new Date(Date.now() - 15 * 60 * 1000);
+      seed(tx);
+
+      mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
+        vci: "TSO", amount: 5000, status: "REJECTED", buy_order: "BO123",
+        session_id: "session-1", accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "",
+        payment_type_code: "VD", response_code: -1, installments_number: 1,
+      });
+
+      const result = await pollStaleTransactionsAction();
+
+      expect(result.processed).toBe(1);
+      expect(result.rejected).toBe(1);
+
+      const updated = mockRepoStore.get(tx.props.id);
+      expect(updated!.props.status).toBe("REJECTED");
+    });
+
+    it("marks as FAILED when transaction has no token", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      // No token set
+      tx.props.createdAt = new Date(Date.now() - 15 * 60 * 1000);
+      seed(tx);
+
+      const result = await pollStaleTransactionsAction();
+
+      expect(result.processed).toBe(1);
+      expect(result.failed).toBe(1);
+
+      const updated = mockRepoStore.get(tx.props.id);
+      expect(updated!.props.status).toBe("FAILED");
+    });
+
+    it("skips ambiguous status (no response_code)", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      tx.setToken("tok_stale_3");
+      tx.props.createdAt = new Date(Date.now() - 15 * 60 * 1000);
+      seed(tx);
+
+      mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
+        vci: "TSO", amount: 5000, status: "INITIALIZED", buy_order: "BO123",
+        session_id: "session-1", accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "",
+        payment_type_code: "", response_code: undefined, installments_number: 0,
+      });
+
+      const result = await pollStaleTransactionsAction();
+
+      expect(result.processed).toBe(1);
+      expect(result.authorized).toBe(0);
+      expect(result.rejected).toBe(0);
+
+      // Transaction should NOT be marked as polled (stays in INITIALIZED for retry)
+      const updated = mockRepoStore.get(tx.props.id);
+      expect(updated!.props.polledAt).toBeUndefined();
+    });
+  });
+
+  describe("Transbank errors", () => {
+    it("marks as FAILED when transaction is older than 7 days and Transbank fails", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      tx.setToken("tok_stale_4");
+      // 8 days old
+      tx.props.createdAt = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+      seed(tx);
+
+      mockGateway._getTransactionStatusMock.mockRejectedValueOnce(new Error("Network error"));
+
+      const result = await pollStaleTransactionsAction();
+
+      expect(result.processed).toBe(1);
+      expect(result.failed).toBe(1);
+
+      const updated = mockRepoStore.get(tx.props.id);
+      expect(updated!.props.status).toBe("FAILED");
+    });
+
+    it("leaves for next cycle when Transbank fails but transaction is < 7 days old", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      tx.setToken("tok_stale_5");
+      // 15 minutes old (< 7 days)
+      tx.props.createdAt = new Date(Date.now() - 15 * 60 * 1000);
+      seed(tx);
+
+      mockGateway._getTransactionStatusMock.mockRejectedValueOnce(new Error("Network error"));
+
+      const result = await pollStaleTransactionsAction();
+
+      expect(result.processed).toBe(1);
+      expect(result.failed).toBe(0);
+
+      // Transaction should NOT be marked as polled (stays in INITIALIZED for retry)
+      const updated = mockRepoStore.get(tx.props.id);
+      expect(updated!.props.polledAt).toBeUndefined();
+    });
   });
 });

@@ -243,7 +243,7 @@ describe("Invalid transitions", () => {
     expect(() => tx.markAsAuthorized(validCommitData)).toThrow("requiere estado \"INITIALIZED\"");
   });
 
-  it("cannot markAsFailed after markAsRejected", () => {
+  it("allows markAsFailed after markAsRejected (only blocks AUTHORIZED)", () => {
     const tx = createTransaction();
     tx.markAsRejected(-1);
     // markAsFailed doesn't check for REJECTED specifically, only blocks AUTHORIZED
