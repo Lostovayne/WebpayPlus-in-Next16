@@ -16,6 +16,9 @@ const envSchema = z.object({
   // Upstash (secondary storage for BetterAuth sessions)
   UPSTASH_REDIS_REST_URL: z.url("UPSTASH_REDIS_REST_URL must be a valid URL").optional(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1, "UPSTASH_REDIS_REST_TOKEN is missing").optional(),
+  // Resend (email service for auth emails) — optional in dev, required in production
+  RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is missing").optional(),
+  RESEND_FROM_EMAIL: z.string().email("RESEND_FROM_EMAIL must be a valid email").optional(),
 });
 
 const parsedEnv = envSchema.safeParse({
@@ -29,6 +32,8 @@ const parsedEnv = envSchema.safeParse({
   BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
   UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
   UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
+  RESEND_API_KEY: process.env.RESEND_API_KEY,
+  RESEND_FROM_EMAIL: process.env.RESEND_FROM_EMAIL,
 });
 
 if (!parsedEnv.success) {

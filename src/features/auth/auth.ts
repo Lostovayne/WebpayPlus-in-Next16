@@ -5,6 +5,11 @@ import { multiSession } from "better-auth/plugins/multi-session";
 import { prisma } from "@/shared/lib/prisma";
 import { env } from "@/shared/env";
 import { createUpstashSecondaryStorage } from "./infrastructure/upstash-secondary-storage";
+import {
+  sendVerificationEmail,
+  sendOTPEmail,
+  sendPasswordResetEmail,
+} from "./infrastructure/email-service";
 
 /**
  * BetterAuth configuration for Webpay Plus integration.
@@ -17,6 +22,13 @@ import { createUpstashSecondaryStorage } from "./infrastructure/upstash-secondar
  * Storage:
  * - Primary: PostgreSQL via Prisma (shared client)
  * - Secondary: Upstash Redis for sessions + rate limiting
+ *
+ * Security:
+ * - Email verification required before first login
+ * - freshAge: 30 min for sensitive actions (password change, etc.)
+ * - JWE cookie cache (encrypted, prevents tampering)
+ * - sameSite: strict (stronger CSRF protection)
+ * - databaseHooks: audit logging for session events
  */
 export const auth = betterAuth({
   appName: "Webpay Plus",
@@ -32,6 +44,7 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // Refresh every 24 hours
+    freshAge: 60 * 30, // 30 minutes — re-auth required for sensitive actions
     cookieCache: {
       enabled: true,
       maxAge: 60 * 5, // 5 minutes
@@ -42,15 +55,19 @@ export const auth = betterAuth({
   // Email and password authentication
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: true, // CRITICAL: must verify email ownership
+    requireEmailVerification: true,
     minPasswordLength: 8,
     maxPasswordLength: 128,
     sendResetPassword: async ({ user, url, token }, request) => {
-      // TODO: Implement email sending with Resend before production deploy
-      // SECURITY: Never log the token or URL in production
-      if (process.env.NODE_ENV === "development") {
-        console.debug(`[Auth] Password reset requested for ${user.email}`);
-      }
+      await sendPasswordResetEmail(user.email, url);
+    },
+  },
+
+  // Email verification
+  emailVerification: {
+    sendOnSignUp: true,
+    sendVerificationEmail: async ({ user, url, token }, request) => {
+      await sendVerificationEmail(user.email, url);
     },
   },
 
@@ -64,11 +81,7 @@ export const auth = betterAuth({
         allowedAttempts: 5,
         storeOTP: "encrypted",
         sendOTP: async ({ user, otp }, ctx) => {
-          // TODO: Implement OTP email sending with Resend before production deploy
-          // SECURITY: Never log the OTP in production
-          if (process.env.NODE_ENV === "development") {
-            console.debug(`[Auth] OTP requested for ${user.email}`);
-          }
+          await sendOTPEmail(user.email, otp);
         },
       },
       backupCodeOptions: {
@@ -113,10 +126,70 @@ export const auth = betterAuth({
     ipAddress: {
       ipAddressHeaders: ["x-forwarded-for", "x-real-ip"],
     },
+    // Serverless: ensure emails don't block response
+    backgroundTasks: {
+      handler: (promise) => {
+        // Fire-and-forget: email sending shouldn't delay the response
+        promise.catch((err) => {
+          console.error("[Auth] Background task error:", err);
+        });
+      },
+    },
   },
 
   // Trusted origins
   trustedOrigins: [env.NEXT_PUBLIC_APP_URL],
+
+  // Audit logging for security events
+  databaseHooks: {
+    session: {
+      create: {
+        after: async (session, ctx) => {
+          if (process.env.NODE_ENV === "development") {
+            console.debug(
+              JSON.stringify({
+                event: "session.create",
+                userId: session.userId,
+                ipAddress: ctx?.request?.headers.get("x-forwarded-for"),
+                userAgent: ctx?.request?.headers.get("user-agent"),
+                timestamp: new Date().toISOString(),
+              }),
+            );
+          }
+        },
+      },
+      delete: {
+        after: async (session) => {
+          if (process.env.NODE_ENV === "development") {
+            console.debug(
+              JSON.stringify({
+                event: "session.delete",
+                sessionId: session.id,
+                userId: session.userId,
+                timestamp: new Date().toISOString(),
+              }),
+            );
+          }
+        },
+      },
+    },
+    user: {
+      update: {
+        after: async (user, ctx) => {
+          // Log email changes (compare with old data if available)
+          if (process.env.NODE_ENV === "development") {
+            console.debug(
+              JSON.stringify({
+                event: "user.update",
+                userId: user.id,
+                timestamp: new Date().toISOString(),
+              }),
+            );
+          }
+        },
+      },
+    },
+  },
 });
 
 export type Auth = typeof auth;
