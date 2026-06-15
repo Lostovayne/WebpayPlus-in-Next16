@@ -35,7 +35,7 @@ export const auth = betterAuth({
     cookieCache: {
       enabled: true,
       maxAge: 60 * 5, // 5 minutes
-      strategy: "compact",
+      strategy: "jwe", // JWE encrypted — prevents cookie tampering in payment context
     },
   },
 
@@ -108,7 +108,7 @@ export const auth = betterAuth({
   advanced: {
     useSecureCookies: env.BETTER_AUTH_URL.startsWith("https"),
     defaultCookieAttributes: {
-      sameSite: "lax",
+      sameSite: "strict", // Stricter CSRF protection for payment-integrated auth
     },
     ipAddress: {
       ipAddressHeaders: ["x-forwarded-for", "x-real-ip"],

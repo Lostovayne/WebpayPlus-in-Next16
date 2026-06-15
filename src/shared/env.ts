@@ -4,18 +4,17 @@ const envSchema = z.object({
   WEBPAY_COMMERCE_CODE: z.string().min(1, "WEBPAY_COMMERCE_CODE is missing"),
   WEBPAY_API_SECRET: z.string().min(1, "WEBPAY_API_SECRET is missing"),
   WEBPAY_ENVIRONMENT: z.enum(["integration", "production"]).default("integration"),
-  DATABASE_URL: z.string().url("DATABASE_URL must be a valid URL"),
+  DATABASE_URL: z.url("DATABASE_URL must be a valid URL"),
   NEXT_PUBLIC_APP_URL: z
-    .string()
     .url("NEXT_PUBLIC_APP_URL must be a valid URL")
     .default("http://localhost:3000"),
   // Secret compartido entre Vercel Cron y el endpoint de polling.
   CRON_SECRET: z.string().min(32, "CRON_SECRET debe tener al menos 32 caracteres"),
   // BetterAuth
   BETTER_AUTH_SECRET: z.string().min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
-  BETTER_AUTH_URL: z.string().url("BETTER_AUTH_URL must be a valid URL").default("http://localhost:3000"),
+  BETTER_AUTH_URL: z.url("BETTER_AUTH_URL must be a valid URL").optional(),
   // Upstash (secondary storage for BetterAuth sessions)
-  UPSTASH_REDIS_REST_URL: z.string().url("UPSTASH_REDIS_REST_URL must be a valid URL").optional(),
+  UPSTASH_REDIS_REST_URL: z.url("UPSTASH_REDIS_REST_URL must be a valid URL").optional(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1, "UPSTASH_REDIS_REST_TOKEN is missing").optional(),
 });
 
@@ -37,4 +36,16 @@ if (!parsedEnv.success) {
   throw new Error("Terminating due to invalid environment variables");
 }
 
-export const env = parsedEnv.data;
+const data = parsedEnv.data;
+
+// Production-safe: BETTER_AUTH_URL must be explicitly set in production
+if (!data.BETTER_AUTH_URL) {
+  if (process.env.NODE_ENV === "development") {
+    data.BETTER_AUTH_URL = "http://localhost:3000";
+  } else {
+    throw new Error("BETTER_AUTH_URL is required in production — no default allowed");
+  }
+}
+
+// After post-parse validation, BETTER_AUTH_URL is guaranteed to be defined
+export const env: Omit<typeof data, "BETTER_AUTH_URL"> & { BETTER_AUTH_URL: string } = data as any;
