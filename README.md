@@ -6,6 +6,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![Prisma](https://img.shields.io/badge/Prisma-7-2D3748?style=flat-square&logo=prisma&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white)
+![BetterAuth](https://img.shields.io/badge/BetterAuth-1.6-7C3AED?style=flat-square&logo=betterauth&logoColor=white)
 ![Vercel](https://img.shields.io/badge/Deploy-Vercel-000?style=flat-square&logo=vercel&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)
 
@@ -44,12 +45,16 @@ This repository resolves all of these cases. The implementation is audited again
 | Polling worker for abandoned transactions (Vercel Cron) | ✅ |
 | Explicit state machine in domain (INITIALIZED → terminal) | ✅ |
 | Anti-Corruption Layer (domain doesn't know HTTP) | ✅ |
-| Env var validation with Zod at startup (fail-fast) | ✅ |
+| Env var validation with Zod 4 at startup (fail-fast) | ✅ |
 | Success page verifies real DB state (no query param trust) | ✅ |
 | Persist before network call (guaranteed traceability) | ✅ |
 | Refund API implemented (`requestRefund`) | ✅ |
 | Rate limiting (Upstash + memory fallback) | ✅ |
-| Unit tests (43 tests, domain + application + API routes) | ✅ |
+| BetterAuth (email/password, 2FA, multi-session) | ✅ |
+| Email verification + password reset (Resend) | ✅ |
+| JWE encrypted session cookies | ✅ |
+| Audit logging (databaseHooks) | ✅ |
+| Unit tests (76 tests, domain + infrastructure + auth) | ✅ |
 
 ---
 
@@ -62,7 +67,10 @@ This repository resolves all of these cases. The implementation is audited again
 | ORM | Prisma 7 |
 | Database | PostgreSQL 17+ |
 | Validation | Zod 4 |
+| Auth | BetterAuth 1.6 (email/password, 2FA, multi-session) |
+| Email | Resend (verification, OTP, password reset) |
 | Rate Limiting | Upstash Redis (sliding window) |
+| Session Storage | Upstash Redis (secondary storage) |
 | Testing | Vitest |
 | Package Manager | Bun |
 | Deploy | Vercel (Cron Jobs included) |
@@ -76,16 +84,25 @@ Hexagonal Architecture (Ports & Adapters) organized by feature scope:
 ```
 src/
 ├── app/                              # Next.js App Router (presentation layer)
-│   ├── api/webpay/
-│   │   ├── checkout/route.ts         # POST — initiate payment
-│   │   ├── return/route.ts           # POST + GET — Transbank callback
-│   │   └── poll/route.ts             # GET — recovery worker (cron)
+│   ├── api/
+│   │   ├── auth/[[...all]]/route.ts  # BetterAuth catch-all handler
+│   │   └── webpay/
+│   │       ├── checkout/route.ts     # POST — initiate payment
+│   │       ├── return/route.ts       # POST + GET — Transbank callback
+│   │       └── poll/route.ts         # GET — recovery worker (cron)
 │   └── checkout/
 │       ├── page.tsx                  # Checkout UI
 │       ├── success/page.tsx          # Payment confirmation (verifies DB)
 │       └── error/page.tsx            # Error screen
 │
 ├── features/
+│   ├── auth/                         # Authentication feature module
+│   │   ├── auth.ts                   # BetterAuth configuration
+│   │   └── infrastructure/
+│   │       ├── email-service.ts           # Resend email templates + sending
+│   │       ├── upstash-secondary-storage.ts  # Redis adapter for sessions
+│   │       └── upstash-secondary-storage.test.ts
+│   │
 │   ├── webpay/                       # Payment feature module
 │   │   ├── domain/
 │   │   │   └── Transaction.ts        # Entity + state machine
@@ -176,6 +193,97 @@ This is where 90% of integrations fail. Transbank can call the `return_url` in *
 
 ---
 
+## Testing
+
+### Test Suite
+
+| Module | Tests | Description |
+|---|---|---|
+| `Transaction.test.ts` | 24 | Domain state machine (all transitions) |
+| `transactionActions.test.ts` | 17 | Application use cases (initiate, confirm, poll) |
+| `route.test.ts` | 12 | API route handlers (return callback) |
+| `upstash-secondary-storage.test.ts` | 14 | Redis adapter (get/set/delete/increment) |
+| **Total** | **76** | |
+
+### Running Tests
+
+```bash
+# Run all tests
+bun run test
+
+# Run with coverage
+bunx vitest run --coverage
+
+# Run specific test file
+bunx vitest run src/features/webpay/domain/Transaction.test.ts
+```
+
+### Test Architecture
+
+- **Unit tests**: Domain entities, state machine, use cases — no external dependencies
+- **Infrastructure tests**: Upstash adapter with mocked `fetch()` — no real Redis needed
+- **Integration tests**: API route handlers with mocked gateways — no real Transbank/DB needed
+
+### Future: Integration Tests with Docker (PR7)
+
+Planned: Docker-based PostgreSQL for integration tests against a real database.
+
+```bash
+# Will be available in PR7:
+bun run test:unit          # Unit tests only (no Docker)
+bun run test:integration   # Integration tests (needs Docker)
+bun run test:all           # Both
+```
+
+---
+
+## Security
+
+### Authentication (BetterAuth)
+
+| Feature | Configuration |
+|---|---|
+| Email/password auth | Enabled |
+| Email verification | Required before first login |
+| Two-factor auth (2FA) | TOTP + OTP via email |
+| Multi-session | Allowed (multiple devices) |
+| Session expiry | 7 days |
+| Session refresh | Every 24 hours |
+| Fresh age (re-auth) | 30 minutes for sensitive actions |
+| Cookie cache | JWE encrypted (prevents tampering) |
+| CSRF protection | Enabled (sameSite: strict) |
+| Rate limiting | 5 attempts/min for sign-in, 3/min for sign-up |
+
+### Email Service (Resend)
+
+| Email Type | Trigger | Template |
+|---|---|---|
+| Verification | On sign-up | HTML button → verify link |
+| OTP (2FA) | On login with 2FA | 6-digit code, 5 min expiry |
+| Password reset | On reset request | HTML button → reset link, 1 hour expiry |
+
+### Audit Logging
+
+Session events are logged via `databaseHooks`:
+
+```json
+{"event":"session.create","userId":"...","ipAddress":"...","timestamp":"..."}
+{"event":"session.delete","sessionId":"...","userId":"...","timestamp":"..."}
+{"event":"user.update","userId":"...","timestamp":"..."}
+```
+
+Currently: `console.debug` (JSON structured) — captured by Vercel logs.
+Future: Datadog integration for production monitoring.
+
+### Environment Variables Security
+
+- All secrets validated at startup with Zod (fail-fast)
+- `BETTER_AUTH_URL`: no default in production (throws if missing)
+- `RESEND_API_KEY`/`RESEND_FROM_EMAIL`: optional in dev, required in production
+- Upstash: optional in dev (memory fallback), required in production (persistent rate limiting)
+
+---
+
 ## Getting Started
 
 ### Prerequisites
@@ -198,26 +306,7 @@ bun install
 cp .env.example .env
 ```
 
-Edit `.env` with your values:
-
-```env
-# Transbank (integration credentials — use as-is for testing)
-WEBPAY_COMMERCE_CODE=597055555532
-WEBPAY_API_SECRET=579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C
-WEBPAY_ENVIRONMENT=integration   # "integration" | "production"
-
-# Database
-DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE
-
-# App
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-
-# Cron Job (Vercel) — generate with: openssl rand -hex 32
-CRON_SECRET=your_secret_min_32_chars
-```
-
-> [!IMPORTANT]
-> `NEXT_PUBLIC_APP_URL` is critical. Transbank POSTs the callback to the `return_url` you provide in `createTransaction`. If this value is wrong, payment succeeds but Transbank can't return the user to your app.
+Edit `.env` with your values. See `.env.example` for full documentation of each variable.
 
 ### 3. Set up the database
 
@@ -259,16 +348,49 @@ CVV: any 3-digit number. Expiry: any future date. RUT: `11111111-1`. Password: `
 
 ## Environment Variables Reference
 
-| Variable | Required | Description |
-|---|---|---|
-| `WEBPAY_COMMERCE_CODE` | ✅ | Commerce code from Transbank |
-| `WEBPAY_API_SECRET` | ✅ | API secret key |
-| `WEBPAY_ENVIRONMENT` | ✅ | `integration` or `production` |
-| `DATABASE_URL` | ✅ | Full PostgreSQL connection string |
-| `NEXT_PUBLIC_APP_URL` | ✅ | App base URL (no trailing slash) |
-| `CRON_SECRET` | ✅ | Secret ≥ 32 chars for `/api/webpay/poll` |
-| `UPSTASH_REDIS_REST_URL` | Optional | Upstash Redis URL (for rate limiting) |
-| `UPSTASH_REDIS_REST_TOKEN` | Optional | Upstash Redis token |
+### Transbank
+
+| Variable | Required | Default (dev) | Description |
+|---|---|---|---|
+| `WEBPAY_COMMERCE_CODE` | ✅ | `597055555532` | Commerce code from Transbank |
+| `WEBPAY_API_SECRET` | ✅ | Integration key | API secret key |
+| `WEBPAY_ENVIRONMENT` | ✅ | `integration` | `integration` or `production` |
+
+### Database
+
+| Variable | Required | Default (dev) | Description |
+|---|---|---|---|
+| `DATABASE_URL` | ✅ | — | Full PostgreSQL connection string |
+
+### Application
+
+| Variable | Required | Default (dev) | Description |
+|---|---|---|---|
+| `NEXT_PUBLIC_APP_URL` | ✅ | `http://localhost:3000` | App base URL (no trailing slash) |
+| `CRON_SECRET` | ✅ | — | Secret ≥ 32 chars for `/api/webpay/poll` |
+
+### Upstash (Rate Limiting + Sessions)
+
+| Variable | Required | Default (dev) | Description |
+|---|---|---|---|
+| `UPSTASH_REDIS_REST_URL` | Optional | — | Upstash Redis URL |
+| `UPSTASH_REDIS_REST_TOKEN` | Optional | — | Upstash Redis token |
+
+### BetterAuth
+
+| Variable | Required | Default (dev) | Description |
+|---|---|---|---|
+| `BETTER_AUTH_SECRET` | ✅ | — | Encryption secret (≥ 32 chars) |
+| `BETTER_AUTH_URL` | ✅ (prod) | `http://localhost:3000` | Base URL for auth endpoints |
+
+### Resend (Email Service)
+
+| Variable | Required | Default (dev) | Description |
+|---|---|---|---|
+| `RESEND_API_KEY` | Optional* | — | API key from resend.com |
+| `RESEND_FROM_EMAIL` | Optional* | — | Verified sender email |
+
+> *Optional in development (logs instead of sending). Required in production.
 
 > [!WARNING]
 > Before going to production, **change** `WEBPAY_COMMERCE_CODE`, `WEBPAY_API_SECRET`, and set `WEBPAY_ENVIRONMENT=production`. Integration credentials won't work in production.
@@ -358,7 +480,7 @@ git push origin master
 bun dev          # Dev server with Turbopack (http://localhost:3000)
 bun build        # Production build
 bun start        # Production server
-bun test         # Run unit tests (Vitest)
+bun test         # Run all tests (Vitest)
 
 # Prisma
 bunx prisma migrate dev --name <name>   # New migration
@@ -435,10 +557,10 @@ try {
 4. Push: `git push origin feat/my-improvement`
 5. Open a Pull Request
 
-Before submitting, ensure linting passes:
+Before submitting, ensure tests pass:
 
 ```bash
-bun lint
+bun test
 ```
 
 ---
