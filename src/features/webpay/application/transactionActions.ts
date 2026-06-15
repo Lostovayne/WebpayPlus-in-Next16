@@ -19,13 +19,19 @@ function getGateway(): InstanceType<typeof TransbankGateway> {
 
 /**
  * Test-only: inject a mock gateway. Resets after each test.
- * @internal
+ * @internal — blocked in production to prevent gateway hijacking
  */
 export async function __setGatewayForTesting(mock: InstanceType<typeof TransbankGateway>): Promise<void> {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("__setGatewayForTesting is not allowed in production");
+  }
   gateway = mock;
 }
 
 export async function __resetGatewayForTesting(): Promise<void> {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("__resetGatewayForTesting is not allowed in production");
+  }
   gateway = null;
 }
 
@@ -136,18 +142,23 @@ export async function confirmTransactionAction(token: string) {
       // El usuario recargó la página de éxito o hubo un doble envío.
       // 422 NO significa FAILED — significa "ya lo procesé antes".
       // Consultamos el estado real para recuperar lo que pasó.
-      const status = await getGateway().getTransactionStatus(token);
+      try {
+        const status = await getGateway().getTransactionStatus(token);
 
-      if (status.status === "AUTHORIZED" && status.response_code === 0) {
-        transaction.markAsAuthorized({
-          authorizationCode: status.authorization_code,
-          paymentTypeCode: status.payment_type_code,
-          installmentsNumber: status.installments_number,
-          installmentsAmount: status.installments_amount ?? 0,
-          responseCode: status.response_code,
-        });
-      } else {
-        transaction.markAsRejected(status.response_code);
+        if (status.status === "AUTHORIZED" && status.response_code === 0) {
+          transaction.markAsAuthorized({
+            authorizationCode: status.authorization_code,
+            paymentTypeCode: status.payment_type_code,
+            installmentsNumber: status.installments_number,
+            installmentsAmount: status.installments_amount ?? 0,
+            responseCode: status.response_code,
+          });
+        } else {
+          transaction.markAsRejected(status.response_code);
+        }
+      } catch {
+        // getTransactionStatus also failed — mark as FAILED
+        transaction.markAsFailed();
       }
     } else {
       // Error técnico real: red, timeout, configuración incorrecta
@@ -221,10 +232,6 @@ export async function pollStaleTransactionsAction(): Promise<{
       continue;
     }
 
-    // Registrar cuándo auditamos para no volver a auditar en el próximo ciclo
-    transaction.markAsPolled();
-    await transactionRepository.save(transaction);
-
     try {
       const status = await getGateway().getTransactionStatus(token);
 
@@ -245,6 +252,8 @@ export async function pollStaleTransactionsAction(): Promise<{
         continue;
       }
 
+      // Marcar como polled DESPUÉS de respuesta exitosa de Transbank
+      transaction.markAsPolled();
       await transactionRepository.save(transaction);
     } catch {
       // Transbank no pudo responder — ¿lleva más de 7 días? → ya jamás se resolverá
@@ -254,7 +263,7 @@ export async function pollStaleTransactionsAction(): Promise<{
         await transactionRepository.save(transaction);
         failed++;
       }
-      // Si no, dejamos para el próximo ciclo del cron
+      // Si no, dejamos para el próximo ciclo del cron — polledAt NO se modifica
     }
   }
 
