@@ -31,5 +31,6 @@ model WebpayTransaction {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  @@index([status, createdAt, polledAt])
   @@map("webpay_transactions")
 }
