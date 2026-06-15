@@ -2,13 +2,9 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { twoFactor } from "better-auth/plugins/two-factor";
 import { multiSession } from "better-auth/plugins/multi-session";
-import { PrismaClient } from "generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { prisma } from "@/shared/lib/prisma";
 import { env } from "@/shared/env";
-
-const connectionString = `${env.DATABASE_URL}`;
-const adapter = new PrismaPg({ connectionString });
-const prisma = new PrismaClient({ adapter });
+import { createUpstashSecondaryStorage } from "./infrastructure/upstash-secondary-storage";
 
 /**
  * BetterAuth configuration for Webpay Plus integration.
@@ -19,15 +15,15 @@ const prisma = new PrismaClient({ adapter });
  * - multiSession: Allow multiple concurrent sessions per user
  *
  * Storage:
- * - Primary: PostgreSQL via Prisma
- * - Secondary: Upstash Redis for sessions (if configured)
+ * - Primary: PostgreSQL via Prisma (shared client)
+ * - Secondary: Upstash Redis for sessions + rate limiting
  */
 export const auth = betterAuth({
   appName: "Webpay Plus",
   baseURL: env.BETTER_AUTH_URL,
   secret: env.BETTER_AUTH_SECRET,
 
-  // Database adapter
+  // Database adapter — reuse shared PrismaClient (no duplicate connection pool)
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),
@@ -46,12 +42,15 @@ export const auth = betterAuth({
   // Email and password authentication
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: false, // Enable in production
+    requireEmailVerification: true, // CRITICAL: must verify email ownership
     minPasswordLength: 8,
     maxPasswordLength: 128,
     sendResetPassword: async ({ user, url, token }, request) => {
-      // TODO: Implement email sending with Resend
-      console.log(`[Auth] Password reset requested for ${user.email}: ${url}`);
+      // TODO: Implement email sending with Resend before production deploy
+      // SECURITY: Never log the token or URL in production
+      if (process.env.NODE_ENV === "development") {
+        console.debug(`[Auth] Password reset requested for ${user.email}`);
+      }
     },
   },
 
@@ -65,8 +64,11 @@ export const auth = betterAuth({
         allowedAttempts: 5,
         storeOTP: "encrypted",
         sendOTP: async ({ user, otp }, ctx) => {
-          // TODO: Implement OTP email sending with Resend
-          console.log(`[Auth] OTP for ${user.email}: ${otp}`);
+          // TODO: Implement OTP email sending with Resend before production deploy
+          // SECURITY: Never log the OTP in production
+          if (process.env.NODE_ENV === "development") {
+            console.debug(`[Auth] OTP requested for ${user.email}`);
+          }
         },
       },
       backupCodeOptions: {
@@ -80,11 +82,22 @@ export const auth = betterAuth({
     multiSession(),
   ],
 
+  // Secondary storage — Upstash Redis for sessions + rate limiting on serverless
+  ...(env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN
+    ? {
+        secondaryStorage: createUpstashSecondaryStorage(
+          env.UPSTASH_REDIS_REST_URL,
+          env.UPSTASH_REDIS_REST_TOKEN,
+        ),
+      }
+    : {}),
+
   // Rate limiting (production by default)
   rateLimit: {
     enabled: true,
     window: 10,
     max: 100,
+    storage: env.UPSTASH_REDIS_REST_URL ? "secondary-storage" : undefined,
     customRules: {
       "/api/auth/sign-in/email": { window: 60, max: 5 },
       "/api/auth/sign-up/email": { window: 60, max: 3 },
