@@ -45,3 +45,9 @@ next-env.d.ts
 
 CLAUDE.md
 AGENTS.md
+
+# agent configuration
+.agents/
+.atl/
+openspec/
+skills-lock.json

@@ -1,437 +1,441 @@
-# Webpay Plus — Next.js Integration Reference
-
 <div align="center">
 
-[![Next.js](https://img.shields.io/badge/Next.js-16.2.1-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
-[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Prisma](https://img.shields.io/badge/Prisma-7-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://prisma.io)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org)
-[![Zod](https://img.shields.io/badge/Zod-4-3068B7?style=for-the-badge&logo=zod&logoColor=white)](https://zod.dev)
-[![Bun](https://img.shields.io/badge/Bun-1.x-fbf0df?style=for-the-badge&logo=bun&logoColor=black)](https://bun.sh)
-[![Biome](https://img.shields.io/badge/Biome-2.2-60A5FA?style=for-the-badge&logo=biome&logoColor=white)](https://biomejs.dev)
-[![Vercel](https://img.shields.io/badge/Deploy-Vercel-black?style=for-the-badge&logo=vercel&logoColor=white)](https://vercel.com)
-[![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](./LICENSE)
+# Webpay Plus — Next.js Integration Reference
 
-**Implementación de referencia production-grade de Webpay Plus REST API sobre Next.js 16 App Router.**  
-Sin el SDK oficial de Transbank. Sin magia negra. Solo `fetch`, tipos estrictos y arquitectura que sobrevive producción.
+![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Prisma](https://img.shields.io/badge/Prisma-7-2D3748?style=flat-square&logo=prisma&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white)
+![Vercel](https://img.shields.io/badge/Deploy-Vercel-000?style=flat-square&logo=vercel&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)
 
-[Documentación Transbank](https://transbankdevelopers.cl/documentacion/webpay-plus) · [Referencia API](https://transbankdevelopers.cl/referencia/webpay#webpay-plus) · [Reportar un Bug](../../issues)
+**Production-grade implementation of Webpay Plus REST API on Next.js 16 App Router.**
+
+No official Transbank SDK. No magic. Just `fetch`, strict types, and architecture that survives production.
+
+[Documentation](https://transbankdevelopers.cl/documentacion/webpay-plus) · [API Reference](https://transbankdevelopers.cl/referencia/webpay#webpay-plus) · [Report a Bug](../../issues)
 
 </div>
 
 ---
 
-## ¿Por qué este repositorio?
+## Why This Repository?
 
-La mayoría de las integraciones de Webpay que encuentras online tienen los mismos problemas:
+Most Webpay integrations found online share the same critical flaws:
 
-- Llaman a `commit` sin manejar el **422** → marcan transacciones como `FAILED` cuando el usuario pagó
-- No manejan el **timeout de 5 minutos** de Transbank (GET con `TBK_TOKEN`)
-- No manejan la **cancelación del usuario** (POST con `TBK_TOKEN`) vs el flujo normal (POST con `token_ws`)
-- No tienen **idempotencia** → doble clic = doble cargo o estado corrupto
-- No tienen **worker de recuperación** → si el usuario paga y pierde conexión, el registro queda en `INITIALIZED` para siempre
+- They call `commit` without handling **422** → marking transactions as `FAILED` when the user actually paid
+- They don't handle Transbank's **5-minute timeout** (GET with `TBK_TOKEN`)
+- They don't distinguish **user cancellation** (POST with `TBK_TOKEN`) from the normal flow (POST with `token_ws`)
+- They lack **idempotency** → double-click = double charge or corrupted state
+- They have no **recovery worker** → if the user pays and loses connection, the transaction stays `INITIALIZED` forever
 
-Este repo resuelve todos esos casos. La implementación está auditada contra la referencia oficial de la API v1.2.
+This repository resolves all of these cases. The implementation is audited against the official API v1.2 reference.
 
 ---
 
-## Características
+## Features
 
-| Feature | Estado |
+| Feature | Status |
 |---|---|
-| Webpay Plus REST API v1.2 (sin SDK oficial) | ✅ |
-| Manejo correcto de los 3 escenarios del return URL | ✅ |
-| Idempotencia en confirmación (doble clic / recarga segura) | ✅ |
-| Fallback inteligente en 422 (ya procesado → no marca FAILED) | ✅ |
-| Worker de polling para transacciones abandonadas (Vercel Cron) | ✅ |
-| Máquina de estados explícita en dominio (INITIALIZED → terminal) | ✅ |
-| Anti-Corruption Layer (el dominio no conoce HTTP) | ✅ |
-| Validación de env vars con Zod al startup (falla rápido) | ✅ |
-| Página de éxito verifica estado real en BD (no confía en query params) | ✅ |
-| Persistencia antes de llamada de red (trazabilidad garantizada) | ✅ |
-| Refund API implementado (`requestRefund`) | ✅ |
+| Webpay Plus REST API v1.2 (no SDK) | ✅ |
+| Correct handling of all 3 return URL scenarios | ✅ |
+| Idempotent confirmation (safe double-click / reload) | ✅ |
+| Smart 422 fallback (already processed → no FAILED) | ✅ |
+| Polling worker for abandoned transactions (Vercel Cron) | ✅ |
+| Explicit state machine in domain (INITIALIZED → terminal) | ✅ |
+| Anti-Corruption Layer (domain doesn't know HTTP) | ✅ |
+| Env var validation with Zod at startup (fail-fast) | ✅ |
+| Success page verifies real DB state (no query param trust) | ✅ |
+| Persist before network call (guaranteed traceability) | ✅ |
+| Refund API implemented (`requestRefund`) | ✅ |
+| Rate limiting (Upstash + memory fallback) | ✅ |
+| Unit tests (43 tests, domain + application + API routes) | ✅ |
 
 ---
 
-## Stack Técnico
+## Tech Stack
 
-| Capa | Tecnología | Versión |
-|---|---|---|
-| Framework | Next.js (App Router, Turbopack) | 16.2.1 |
-| Runtime | React Server Actions, RSC | 19.2.4 |
-| Lenguaje | TypeScript strict mode | 5.x |
-| ORM | Prisma | 7.6.0 |
-| Base de datos | PostgreSQL | 17+ |
-| Validación | Zod | 4.x |
-| Linter/Formatter | Biome | 2.2.0 |
-| Package manager | Bun | 1.x |
-| Deploy | Vercel (Cron Jobs incluido) | — |
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16 (App Router, Turbopack) |
+| Language | TypeScript 5 (strict mode) |
+| ORM | Prisma 7 |
+| Database | PostgreSQL 17+ |
+| Validation | Zod 4 |
+| Rate Limiting | Upstash Redis (sliding window) |
+| Testing | Vitest |
+| Package Manager | Bun |
+| Deploy | Vercel (Cron Jobs included) |
 
 ---
 
-## Arquitectura
+## Architecture
 
-El proyecto usa **Hexagonal Architecture** (Ports & Adapters) organizada por feature scope:
+Hexagonal Architecture (Ports & Adapters) organized by feature scope:
 
 ```
 src/
-├── app/                          # Next.js App Router (capa de presentación)
-│   ├── api/
-│   │   └── webpay/
-│   │       ├── return/           # POST y GET — callback de Transbank
-│   │       │   └── route.ts
-│   │       └── poll/             # GET — worker de polling (cron job)
-│   │           └── route.ts
+├── app/                              # Next.js App Router (presentation layer)
+│   ├── api/webpay/
+│   │   ├── checkout/route.ts         # POST — initiate payment
+│   │   ├── return/route.ts           # POST + GET — Transbank callback
+│   │   └── poll/route.ts             # GET — recovery worker (cron)
 │   └── checkout/
-│       ├── page.tsx              # UI del producto/checkout
-│       ├── success/page.tsx      # Confirmación de pago (verifica BD)
-│       └── error/page.tsx        # Pantalla de error
+│       ├── page.tsx                  # Checkout UI
+│       ├── success/page.tsx          # Payment confirmation (verifies DB)
+│       └── error/page.tsx            # Error screen
 │
-└── features/
-    └── webpay/
-        ├── domain/
-        │   └── Transaction.ts    # Entidad + máquina de estados
-        ├── application/
-        │   └── transactionActions.ts  # Use Cases (Server Actions)
-        └── infrastructure/
-            ├── TransbankGateway.ts         # Adapter HTTP → Transbank API
-            └── PrismaTransactionRepository.ts  # Adapter BD → Dominio
+├── features/
+│   ├── webpay/                       # Payment feature module
+│   │   ├── domain/
+│   │   │   └── Transaction.ts        # Entity + state machine
+│   │   ├── application/
+│   │   │   └── transactionActions.ts # Use cases (Server Actions)
+│   │   └── infrastructure/
+│   │       ├── TransbankGateway.ts           # HTTP adapter → Transbank API
+│   │       └── PrismaTransactionRepository.ts # DB adapter → Domain
+│   │
+│   └── rate-limit/                   # Rate limiting feature module
+│       ├── domain/
+│       │   ├── RateLimitGateway.ts    # Interface (swappable)
+│       │   └── parseWindow.ts         # Shared window parser
+│       └── infrastructure/
+│           ├── UpstashRateLimitGateway.ts   # Upstash adapter
+│           └── MemoryRateLimitGateway.ts    # Dev fallback
+│
+└── shared/
+    ├── env.ts                        # Zod-validated env vars
+    ├── lib/prisma.ts                 # Prisma client singleton
+    └── rate-limit.ts                 # Rate limit factory + helpers
 ```
 
-### Flujo de datos
+### Data Flow
 
 ```
-UI (checkout/page.tsx)
-  └── Server Action: initiateTransactionAction()
-        ├── 1. Crea entidad WebpayTransaction en INITIALIZED
-        ├── 2. Persiste en BD  ← ANTES de tocar la red
-        ├── 3. TransbankGateway.createTransaction() → obtiene token + URL
-        ├── 4. Persiste token en BD
-        └── 5. redirect() → formulario de pago Transbank
-
-Transbank (pasarela de pago)
-  └── POST /api/webpay/return?token_ws=<token>
-        └── confirmTransactionAction(token)
-              ├── A) Normal: commitTransaction() → AUTHORIZED o REJECTED
-              ├── B) 422: getTransactionStatus() → fallback sin marcar FAILED
-              └── C) Ya terminal: idempotente, retorna estado actual
-
-Vercel Cron (cada 5 min)
-  └── GET /api/webpay/poll  [con Authorization: Bearer <CRON_SECRET>]
-        └── pollStaleTransactionsAction()
-              └── Encuentra INITIALIZED > 10 min → getTransactionStatus()
+┌─────────────────────────────────────────────────────────────────────┐
+│ 1. INITIATE                                                        │
+│    checkout/page.tsx                                               │
+│    └── initiateTransactionAction(amount)                            │
+│        ├── Create WebpayTransaction (INITIALIZED)                   │
+│        ├── Persist to DB ← BEFORE network call                      │
+│        ├── TransbankGateway.createTransaction() → token + URL       │
+│        ├── Save token to DB                                         │
+│        └── redirect() → Transbank payment form                      │
+├─────────────────────────────────────────────────────────────────────┤
+│ 2. CONFIRM (Transbank callback)                                     │
+│    POST /api/webpay/return?token_ws=<token>                         │
+│    └── confirmTransactionAction(token)                               │
+│        ├── A) Normal: commitTransaction() → AUTHORIZED | REJECTED   │
+│        ├── B) 422: getTransactionStatus() → fallback, no FAILED     │
+│        └── C) Already terminal: idempotent, return current state    │
+├─────────────────────────────────────────────────────────────────────┤
+│ 3. RECOVER (Vercel Cron)                                            │
+│    GET /api/webpay/poll  [Authorization: Bearer <CRON_SECRET>]      │
+│    └── pollStaleTransactionsAction()                                 │
+│        └── Find INITIALIZED > 10 min → getTransactionStatus()       │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Los 3 Escenarios del Return URL
+## The 3 Return URL Scenarios
 
-Este es el punto donde falla el 90% de las integraciones. Transbank puede llamar al `return_url` de **tres formas distintas** y hay que manejarlas todas:
+This is where 90% of integrations fail. Transbank can call the `return_url` in **three different ways**, and you must handle all of them:
 
-| Escenario | Método HTTP | Parámetros en body/query |
+| Scenario | HTTP Method | Parameters |
 |---|---|---|
-| Pago completado (aprobado o rechazado) | `POST` | `token_ws=<token>` |
-| Usuario presionó "Anular" en la pasarela | `POST` | `TBK_TOKEN=<t>` + `TBK_ORDEN_COMPRA=<bo>` + `TBK_ID_SESION=<s>` |
-| Timeout (5 min sin acción del usuario) | `GET` | `TBK_TOKEN=<t>` + `TBK_ORDEN_COMPRA=<bo>` + `TBK_ID_SESION=<s>` |
+| Payment completed (approved or rejected) | `POST` | `token_ws=<token>` |
+| User pressed "Cancel" on the payment page | `POST` | `TBK_TOKEN=<t>` + `TBK_ORDEN_COMPRA=<bo>` + `TBK_ID_SESION=<s>` |
+| Timeout (5 min without user action) | `GET` | `TBK_TOKEN=<t>` + `TBK_ORDEN_COMPRA=<bo>` + `TBK_ID_SESION=<s>` |
 
 > [!IMPORTANT]
-> Cuando el usuario *cancela* o hay *timeout*, **NO viene `token_ws`**. Si sólo manejas `token_ws` estás ignorando dos de los tres escenarios.
+> When the user *cancels* or there's a *timeout*, **`token_ws` is NOT present**. If you only handle `token_ws`, you're ignoring two of the three scenarios.
 
 ---
 
-## Estados de la Transacción
+## Transaction State Machine
 
 ```
-INITIALIZED ──→ AUTHORIZED  (Transbank aprobó)
-            └──→ REJECTED    (Transbank rechazó por fondos, límite, etc.)
-            └──→ ABORTED     (usuario canceló o timeout)
-            └──→ FAILED      (error técnico nuestro, nunca del banco)
-
-AUTHORIZED  ──→ REVERSED    (refund/anulación exitosa)
+                    ┌──────────┐
+                    │ INITIALIZED │
+                    └─────┬────┘
+           ┌──────────────┼──────────────┬──────────────┐
+           ▼              ▼              ▼              ▼
+    ┌─────────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+    │ AUTHORIZED  │ │ REJECTED │ │ ABORTED  │ │  FAILED  │
+    └──────┬──────┘ └──────────┘ └──────────┘ └──────────┘
+           │
+           ▼
+    ┌──────────┐
+    │ REVERSED │
+    └──────────┘
 ```
 
 > [!CAUTION]
-> Una transacción `AUTHORIZED` **jamás puede retroceder a `FAILED`**. Si Transbank ya cobró y tu sistema falla después, debes llamar a `requestRefund()`. Un rollback de estado es un desastre contable y una violación de las políticas de Transbank.
+> An `AUTHORIZED` transaction **can NEVER revert to `FAILED`**. If Transbank already charged and your system fails afterward, you must call `requestRefund()`. A state rollback is an accounting disaster and a violation of Transbank policies.
 
 ---
 
-## Instalación y configuración
+## Getting Started
 
-### Prerrequisitos
+### Prerequisites
 
-- [Bun](https://bun.sh) 1.x  
-- [Node.js](https://nodejs.org) 20+ (si no usas Bun)  
-- PostgreSQL 14+ (local o en la nube — recomendamos [Neon](https://neon.tech))  
-- Cuenta activa en [Portal Transbank Developers](https://www.transbankdevelopers.cl)
+- [Bun](https://bun.sh) 1.x (or [Node.js](https://nodejs.org) 20+)
+- PostgreSQL 14+ (local or cloud — [Neon](https://neon.tech) recommended)
+- Active account on [Transbank Developers Portal](https://www.transbankdevelopers.cl)
 
-### 1. Clonar e instalar dependencias
+### 1. Clone and install
 
 ```bash
-git clone https://github.com/tu-usuario/webpay.git
-cd webpay
+git clone https://github.com/Lostovayne/Next16_WebpayPlus_Better-Auth.git
+cd Next16_WebpayPlus_Better-Auth
 bun install
 ```
 
-### 2. Configurar variables de entorno
+### 2. Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Edita `.env` con tus valores:
+Edit `.env` with your values:
 
 ```env
-# ─── Transbank ──────────────────────────────────────────────────────────────
-# Credenciales de integración (para testing, úsalas tal cual)
+# Transbank (integration credentials — use as-is for testing)
 WEBPAY_COMMERCE_CODE=597055555532
 WEBPAY_API_SECRET=579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C
 WEBPAY_ENVIRONMENT=integration   # "integration" | "production"
 
-# ─── Base de datos ──────────────────────────────────────────────────────────
+# Database
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE
 
-# ─── App ────────────────────────────────────────────────────────────────────
+# App
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 
-# ─── Cron Job (Vercel) ──────────────────────────────────────────────────────
-# Genera con: openssl rand -hex 32
-CRON_SECRET=tu_secret_de_minimo_32_caracteres_generado_con_openssl
+# Cron Job (Vercel) — generate with: openssl rand -hex 32
+CRON_SECRET=your_secret_min_32_chars
 ```
 
 > [!IMPORTANT]
-> `NEXT_PUBLIC_APP_URL` es crítico. Transbank hace el callback POST al `return_url` que tú le indicas en `createTransaction`. Si este valor está mal, el pago funciona pero Transbank no puede devolver al usuario a tu app.
+> `NEXT_PUBLIC_APP_URL` is critical. Transbank POSTs the callback to the `return_url` you provide in `createTransaction`. If this value is wrong, payment succeeds but Transbank can't return the user to your app.
 
-### 3. Configurar la base de datos
+### 3. Set up the database
 
 ```bash
-# Aplica las migraciones (crea la tabla webpay_transactions)
 bunx prisma migrate dev --name init
-
-# (Opcional) Genera el cliente Prisma si no se generó automáticamente
-bunx prisma generate
+bunx prisma generate   # (optional — auto-generated if not present)
 ```
 
-### 4. Levantar el servidor de desarrollo
+### 4. Start the dev server
 
 ```bash
 bun dev
 ```
 
-Abre [http://localhost:3000/checkout](http://localhost:3000/checkout) y verás la pantalla de checkout.
+Open [http://localhost:3000/checkout](http://localhost:3000/checkout).
 
 ---
 
-## Credenciales de integración (Testing)
+## Test Credentials
 
-Usa estas credenciales en `WEBPAY_ENVIRONMENT=integration`. Son públicas y oficiales de Transbank:
+These are public, official Transbank integration credentials:
 
-| Variable | Valor |
+| Variable | Value |
 |---|---|
 | `WEBPAY_COMMERCE_CODE` | `597055555532` |
 | `WEBPAY_API_SECRET` | `579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C` |
 
-**Tarjetas de prueba en el formulario de Transbank:**
+**Test cards on the Transbank form:**
 
-| Tipo | Número | Resultado |
+| Type | Number | Result |
 |---|---|---|
-| VISA aprobada | `4051 8856 0044 6623` | Aprobada |
-| VISA rechazada | `4197 0230 0000 0185` | Rechazada |
-| Mastercard aprobada | `5186 0595 5959 0568` | Aprobada |
+| VISA approved | `4051 8856 0044 6623` | Approved |
+| VISA rejected | `4197 0230 0000 0185` | Rejected |
+| Mastercard approved | `5186 0595 5959 0568` | Approved |
 
-CVV: cualquier número de 3 dígitos. Fecha: cualquier fecha futura. RUT: `11111111-1`. Contraseña: `123`.
+CVV: any 3-digit number. Expiry: any future date. RUT: `11111111-1`. Password: `123`.
 
 ---
 
-## Variables de Entorno — Referencia completa
+## Environment Variables Reference
 
-| Variable | Requerida | Descripción |
+| Variable | Required | Description |
 |---|---|---|
-| `WEBPAY_COMMERCE_CODE` | ✅ | Código de comercio otorgado por Transbank |
-| `WEBPAY_API_SECRET` | ✅ | Llave secreta de API |
-| `WEBPAY_ENVIRONMENT` | ✅ | `integration` o `production` |
-| `DATABASE_URL` | ✅ | URL PostgreSQL completa |
-| `NEXT_PUBLIC_APP_URL` | ✅ | URL base de tu app (sin barra al final) |
-| `CRON_SECRET` | ✅ | Secret ≥ 32 chars para el endpoint `/api/webpay/poll` |
+| `WEBPAY_COMMERCE_CODE` | ✅ | Commerce code from Transbank |
+| `WEBPAY_API_SECRET` | ✅ | API secret key |
+| `WEBPAY_ENVIRONMENT` | ✅ | `integration` or `production` |
+| `DATABASE_URL` | ✅ | Full PostgreSQL connection string |
+| `NEXT_PUBLIC_APP_URL` | ✅ | App base URL (no trailing slash) |
+| `CRON_SECRET` | ✅ | Secret ≥ 32 chars for `/api/webpay/poll` |
+| `UPSTASH_REDIS_REST_URL` | Optional | Upstash Redis URL (for rate limiting) |
+| `UPSTASH_REDIS_REST_TOKEN` | Optional | Upstash Redis token |
 
 > [!WARNING]
-> Antes de pasar a producción, **cambia** `WEBPAY_COMMERCE_CODE`, `WEBPAY_API_SECRET` y `WEBPAY_ENVIRONMENT=production`. Las credenciales de integración no funcionan en producción.
+> Before going to production, **change** `WEBPAY_COMMERCE_CODE`, `WEBPAY_API_SECRET`, and set `WEBPAY_ENVIRONMENT=production`. Integration credentials won't work in production.
 
 ---
 
-## Esquema de Base de Datos
+## Database Schema
 
-La tabla `webpay_transactions` almacena el ciclo de vida completo de cada intento de pago:
+The `webpay_transactions` table stores the complete lifecycle of each payment attempt:
 
 ```sql
 CREATE TABLE webpay_transactions (
-  id                  VARCHAR(36)     PRIMARY KEY,  -- UUID v7
-  buy_order           VARCHAR(26)     UNIQUE NOT NULL,  -- max 26 chars (Transbank)
+  id                  VARCHAR(36)     PRIMARY KEY,     -- UUID v7
+  buy_order           VARCHAR(26)     UNIQUE NOT NULL, -- max 26 chars (Transbank)
   session_id          VARCHAR(61)     NOT NULL,
   amount              DECIMAL(17, 2)  NOT NULL,
-  token               VARCHAR(64)     UNIQUE,       -- null hasta que Transbank lo devuelve
+  token               VARCHAR(64)     UNIQUE,          -- null until Transbank returns it
   status              VARCHAR(20)     DEFAULT 'INITIALIZED',
 
-  -- Datos del callback de Transbank
+  -- Transbank callback data
+  vci                 VARCHAR(10),                     -- verification integrity code
+  card_number         VARCHAR(19),                     -- last 4 digits
+  accounting_date     VARCHAR(4),
+  transaction_date    TIMESTAMP,
   auth_code           VARCHAR(6),
   payment_type_code   VARCHAR(2),
   response_code       INTEGER,
   installments_amount DECIMAL(17, 2),
   installments_number INTEGER,
   aborted_reason      VARCHAR(50),
-  polled_at           TIMESTAMP,      -- última vez que el worker auditó esta tx
+  polled_at           TIMESTAMP,                       -- last worker audit timestamp
 
   created_at          TIMESTAMP       DEFAULT NOW(),
-  updated_at          TIMESTAMP       -- auto-updated por Prisma
+  updated_at          TIMESTAMP       -- auto-updated by Prisma
 );
+
+CREATE INDEX idx_transactions_status_created_polled
+  ON webpay_transactions (status, created_at, polled_at);
 ```
 
 ---
 
-## Worker de Polling
+## Polling Worker
 
-El endpoint `GET /api/webpay/poll` resuelve el **escenario del usuario fantasma**: pagó en el banco, pero perdió conexión (WiFi caído, celular sin batería, pestaña cerrada) antes de regresar al `return_url`. Sin este worker, la transacción quedaría en `INITIALIZED` indefinidamente aunque el dinero fue debitado.
+The `GET /api/webpay/poll` endpoint resolves the **phantom user scenario**: the user paid at the bank but lost connection (WiFi dropped, phone died, tab closed) before returning to the `return_url`. Without this worker, the transaction would stay `INITIALIZED` forever even though the money was debited.
 
-**¿Cómo funciona?**
+**How it works:**
 
-1. Vercel Cron lo llama cada 5 minutos (configurado en `vercel.json`)
-2. Busca transacciones en `INITIALIZED` de más de 10 minutos
-3. Para cada una, llama a `GET /transactions/{token}` en Transbank
-4. Actualiza el estado según la respuesta (`AUTHORIZED`, `REJECTED`, o deja para el próximo ciclo)
-5. Después de 7 días, si Transbank no responde, marca como `FAILED` (su API de estado ya no disponible)
+1. Vercel Cron calls it every 5 minutes (configured in `vercel.json`)
+2. Finds transactions in `INITIALIZED` for more than 10 minutes
+3. For each one, calls `GET /transactions/{token}` on Transbank
+4. Updates status based on response (`AUTHORIZED`, `REJECTED`, or defers to next cycle)
+5. After 7 days, if Transbank doesn't respond, marks as `FAILED` (status API no longer available)
 
-**Para llamarlo manualmente en desarrollo:**
+**Manual invocation in development:**
 
 ```bash
 curl -X GET http://localhost:3000/api/webpay/poll \
-  -H "Authorization: Bearer tu_cron_secret_aqui"
+  -H "Authorization: Bearer your_cron_secret"
 ```
-
-**Configuración en `vercel.json`:**
-
-```json
-{
-  "crons": [
-    {
-      "path": "/api/webpay/poll",
-      "schedule": "*/5 * * * *"
-    }
-  ]
-}
-```
-
-> [!NOTE]
-> Vercel agrega el header `Authorization: Bearer <CRON_SECRET>` automáticamente en los Cron Jobs. Para invocación manual (development, CI), agrégalo manualmente como se muestra arriba.
 
 ---
 
-## Deploy en Vercel
+## Deployment to Vercel
 
-### 1. Configura las variables de entorno en Vercel
+### 1. Set environment variables
 
-En el dashboard de tu proyecto → **Settings → Environment Variables**, agrega todas las variables de `.env.example` con sus valores de producción.
+In your project dashboard → **Settings → Environment Variables**, add all variables from `.env.example` with production values.
 
-### 2. Asegúrate de que los Cron Jobs estén habilitados
+### 2. Ensure Cron Jobs are enabled
 
-El archivo `vercel.json` en la raíz del proyecto configura el cron automáticamente. Solo asegúrate de que tu plan de Vercel soporte Cron Jobs (Pro o superior).
+The `vercel.json` file configures the cron automatically. Ensure your Vercel plan supports Cron Jobs (Pro or higher).
 
 ### 3. Deploy
 
 ```bash
-# Con Vercel CLI
 vercel --prod
-
-# O simplemente haz push a main si tienes CI/CD configurado
-git push origin main
+# Or simply push to main with CI/CD configured
+git push origin master
 ```
 
 ---
 
-## Comandos disponibles
+## Available Commands
 
 ```bash
-bun dev          # Servidor de desarrollo con Turbopack (http://localhost:3000)
-bun build        # Build de producción
-bun start        # Servidor de producción
-bun lint         # Biome: linting + type checking
-bun format       # Biome: formateo automático del código
+bun dev          # Dev server with Turbopack (http://localhost:3000)
+bun build        # Production build
+bun start        # Production server
+bun test         # Run unit tests (Vitest)
 
 # Prisma
-bunx prisma migrate dev --name <nombre>   # Nueva migración
-bunx prisma generate                       # Regenerar cliente
-bunx prisma studio                         # GUI de la BD en browser
-bunx prisma migrate status                 # Estado de migraciones
+bunx prisma migrate dev --name <name>   # New migration
+bunx prisma generate                     # Regenerate client
+bunx prisma studio                       # DB GUI in browser
+bunx prisma migrate status               # Migration status
 ```
 
 ---
 
-## Estructura del Anti-Corruption Layer
+## Anti-Corruption Layer
 
-El `TransbankGateway` es el único archivo que sabe que Transbank existe. El dominio y la aplicación trabajan con interfaces limpias:
+`TransbankGateway` is the only file that knows Transbank exists. The domain and application work with clean interfaces:
 
 ```typescript
-// ✅ El dominio solo conoce esto:
+// ✅ The domain only knows this:
 interface WebpayInitResponse {
   token: string;
   url: string;
 }
 
-// ✅ Y el use case solo hace esto:
+// ✅ And the use case only does this:
 const { token, url } = await gateway.createTransaction(buyOrder, sessionId, amount, returnUrl);
 
-// ❌ Nunca esto en el dominio o application:
+// ❌ Never this in the domain or application:
 fetch("https://webpay3g.transbank.cl/...", { headers: { "Tbk-Api-Key-Id": ... } });
 ```
 
-Si mañana Transbank cambia su API, su URL o sus headers, **solo tocas `TransbankGateway.ts`** y el resto del sistema no sabe que pasó algo.
+If Transbank changes their API, URL, or headers tomorrow, **you only touch `TransbankGateway.ts`** — the rest of the system doesn't know anything happened.
 
 ---
 
-## Manejo del error 422
+## 422 Error Handling
 
-El 422 de Transbank merece atención especial. La documentación dice:
+Transbank's 422 deserves special attention. Their documentation states:
 
-> *Si el comercio reintenta el commit de una transacción ya confirmada, recibirá un HTTP 422.*
+> *If the merchant retries the commit of an already-confirmed transaction, they'll receive HTTP 422.*
 
-Esto pasa más de lo que crees: doble clic del usuario, recarga de página, retry del worker, caída de red después del commit. La implementación correcta **no es marcar FAILED** — es consultar el estado real:
+This happens more often than you'd think: user double-click, page reload, worker retry, network drop after commit. The correct approach is **not** marking `FAILED` — it's querying the real status:
 
 ```typescript
 try {
   const response = await gateway.commitTransaction(token);
-  // Proceso normal...
+  // Normal flow...
 } catch (error) {
   if (error instanceof TransbankAlreadyProcessedError) {
-    // 422: ya fue procesado antes → recuperar el estado real sin marcar FAILED
+    // 422: already processed → recover real status without marking FAILED
     const status = await gateway.getTransactionStatus(token);
-    // Ahora sí actualizamos el estado correctamente
+    // Now we update the status correctly
   }
 }
 ```
 
 ---
 
-## Limitaciones de la API Transbank que debes conocer
+## Transbank API Limitations
 
-| Restricción | Valor | Impacto |
+| Restriction | Value | Impact |
 |---|---|---|
-| `buy_order` máximo | 26 caracteres | Validado en dominio |
-| `session_id` máximo | 61 caracteres | UUID v4 = 36 chars ✅ |
-| Monto máximo CLP | 999.999.999 | Validado en dominio |
-| Monto mínimo | > 0 | Validado en dominio |
-| Disponibilidad estado (`GET /transactions/{token}`) | 7 días desde creación | El worker lo respeta |
-| Reversa (`POST /transactions/{token}/refunds`) | Solo mismo día contable para reversa; anulación tiene otras reglas | No ignorar esto en prod |
+| `buy_order` max | 26 characters | Validated in domain |
+| `session_id` max | 61 characters | UUID v4 = 36 chars ✅ |
+| Max amount CLP | 999,999,999 | Validated in domain |
+| Min amount | > 0 | Validated in domain |
+| Status availability (`GET /transactions/{token}`) | 7 days from creation | Worker respects this |
+| Refund (`POST /transactions/{token}/refunds`) | Same business day for reversal; nullification has different rules | Don't ignore in production |
 
 ---
 
-## Contribuir
+## Contributing
 
-1. Fork del repositorio
-2. Crea una rama: `git checkout -b feat/mi-mejora`
-3. Commitea tus cambios: `git commit -m "feat: descripción"`
-4. Push: `git push origin feat/mi-mejora`
-5. Abre un Pull Request
+1. Fork the repository
+2. Create a branch: `git checkout -b feat/my-improvement`
+3. Commit your changes: `git commit -m "feat: description"`
+4. Push: `git push origin feat/my-improvement`
+5. Open a Pull Request
 
-Antes de hacer PR, asegúrate de que el linter pase:
+Before submitting, ensure linting passes:
 
 ```bash
 bun lint
@@ -439,14 +443,14 @@ bun lint
 
 ---
 
-## Licencia
+## License
 
-MIT — úsalo, modifícalo, véndelo si quieres. Solo no vengas a llorar si no manejas el 422.
+MIT — use it, modify it, sell it if you want. Just don't come crying when you didn't handle the 422.
 
 ---
 
 <div align="center">
 
-Documentación oficial: [transbankdevelopers.cl](https://transbankdevelopers.cl) · API Referencia: [Webpay Plus](https://transbankdevelopers.cl/referencia/webpay#webpay-plus)
+Documentation: [transbankdevelopers.cl](https://transbankdevelopers.cl) · API Reference: [Webpay Plus](https://transbankdevelopers.cl/referencia/webpay#webpay-plus)
 
 </div>
