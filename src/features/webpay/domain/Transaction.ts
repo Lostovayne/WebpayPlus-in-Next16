@@ -95,6 +95,17 @@ export class WebpayTransaction {
 
   public markAsAuthorized(data: WebpayCommitData): void {
     this.assertStatus("INITIALIZED", "markAsAuthorized");
+
+    // Validar ANTES de mutar el estado — si algo falla, la transacción queda en INITIALIZED
+    if (data.cardNumber !== undefined && data.cardNumber.length > 4) {
+      throw new Error(`[Domain] cardNumber debe ser máximo 4 dígitos (PCI DSS). Recibido: ${data.cardNumber.length} caracteres.`);
+    }
+    const parsedDate = new Date(data.transactionDate);
+    if (isNaN(parsedDate.getTime())) {
+      throw new Error(`[Domain] transactionDate inválida de Transbank: "${data.transactionDate}". Auditar manualmente.`);
+    }
+
+    // Validaciones pasan → ahora sí mutar el estado
     this.props.status = "AUTHORIZED";
     this.props.authCode = data.authorizationCode;
     this.props.paymentTypeCode = data.paymentTypeCode;
@@ -103,9 +114,9 @@ export class WebpayTransaction {
     this.props.responseCode = data.responseCode;
     // Audit trail — campos de Transbank para reconciliation contable
     this.props.vci = data.vci;
-    this.props.cardNumber = data.cardNumber;
     this.props.accountingDate = data.accountingDate;
-    this.props.transactionDate = new Date(data.transactionDate);
+    this.props.cardNumber = data.cardNumber;
+    this.props.transactionDate = parsedDate;
   }
 
   public markAsRejected(responseCode?: number): void {

@@ -137,6 +137,36 @@ describe("State transitions", () => {
       expect(tx.props.cardNumber).toBeUndefined();
     });
 
+    it("throws when cardNumber exceeds 4 digits (PCI DSS violation)", () => {
+      const tx = createTransaction();
+      expect(() =>
+        tx.markAsAuthorized({
+          ...validCommitData,
+          cardNumber: "12345",
+        }),
+      ).toThrow("cardNumber debe ser máximo 4 dígitos");
+    });
+
+    it("throws when transactionDate is invalid ISO string", () => {
+      const tx = createTransaction();
+      expect(() =>
+        tx.markAsAuthorized({
+          ...validCommitData,
+          transactionDate: "not-a-date",
+        }),
+      ).toThrow("transactionDate inválida");
+    });
+
+    it("throws when transactionDate is empty string", () => {
+      const tx = createTransaction();
+      expect(() =>
+        tx.markAsAuthorized({
+          ...validCommitData,
+          transactionDate: "",
+        }),
+      ).toThrow("transactionDate inválida");
+    });
+
     it("throws when not INITIALIZED", () => {
       const tx = createTransaction({ status: "AUTHORIZED" });
       expect(() => tx.markAsAuthorized(validCommitData)).toThrow("requiere estado \"INITIALIZED\"");

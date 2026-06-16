@@ -631,4 +631,57 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
     expect(result.cardNumber).toBeUndefined();
     expect(result.vci).toBe("TSO");
   });
+
+  it("normalizes empty card_number to undefined (not empty string)", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_5");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockResolvedValueOnce({
+      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "0101",
+      transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
+      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      card_detail: { card_number: "" },
+    });
+
+    const result = await confirmTransactionAction("tok_audit_5");
+
+    expect(result.cardNumber).toBeUndefined();
+  });
+
+  it("normalizes null vci to undefined", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_6");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockResolvedValueOnce({
+      vci: null, amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "0101",
+      transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
+      payment_type_code: "VD", response_code: 0, installments_number: 1,
+    });
+
+    const result = await confirmTransactionAction("tok_audit_6");
+
+    expect(result.vci).toBeUndefined();
+  });
+
+  it("marks FAILED when transactionDate is invalid (domain rejects it)", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_7");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockResolvedValueOnce({
+      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "0101",
+      transaction_date: "not-a-real-date", authorization_code: "AUTH001",
+      payment_type_code: "VD", response_code: 0, installments_number: 1,
+    });
+
+    // Domain throws Invalid Date → caught by outer catch → marks FAILED
+    const result = await confirmTransactionAction("tok_audit_7");
+
+    expect(result.status).toBe("FAILED");
+  });
 });

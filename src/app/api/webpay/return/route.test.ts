@@ -278,6 +278,9 @@ describe("GET /api/webpay/return", () => {
         installmentsNumber: 1,
         installmentsAmount: 5000,
         responseCode: 0,
+        vci: "TSO",
+        accountingDate: "0101",
+        transactionDate: "2026-01-01T00:00:00.000Z",
       });
       seed(tx);
 

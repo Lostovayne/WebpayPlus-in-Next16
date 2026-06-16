@@ -134,8 +134,8 @@ export async function confirmTransactionAction(token: string) {
         installmentsAmount: response.installments_amount ?? 0,
         responseCode: response.response_code,
         // Audit trail — datos de Transbank para reconciliation
-        vci: response.vci,
-        cardNumber: response.card_detail?.card_number?.slice(-4),
+        vci: response.vci ?? undefined,
+        cardNumber: response.card_detail?.card_number?.slice(-4) || undefined,
         accountingDate: response.accounting_date,
         transactionDate: response.transaction_date,
       });
@@ -158,8 +158,8 @@ export async function confirmTransactionAction(token: string) {
             installmentsAmount: status.installments_amount ?? 0,
             responseCode: status.response_code,
             // Audit trail — datos de Transbank para reconciliation
-            vci: status.vci,
-            cardNumber: status.card_detail?.card_number?.slice(-4),
+            vci: status.vci ?? undefined,
+            cardNumber: status.card_detail?.card_number?.slice(-4) || undefined,
             accountingDate: status.accounting_date,
             transactionDate: status.transaction_date,
           });
@@ -253,8 +253,8 @@ export async function pollStaleTransactionsAction(): Promise<{
           installmentsAmount: status.installments_amount ?? 0,
           responseCode: status.response_code,
           // Audit trail — datos de Transbank para reconciliation
-          vci: status.vci,
-          cardNumber: status.card_detail?.card_number?.slice(-4),
+          vci: status.vci ?? undefined,
+          cardNumber: status.card_detail?.card_number?.slice(-4) || undefined,
           accountingDate: status.accounting_date,
           transactionDate: status.transaction_date,
         });
