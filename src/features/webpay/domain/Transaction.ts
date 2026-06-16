@@ -28,6 +28,11 @@ export interface WebpayTransactionProps {
   installmentsAmount?: number;
   installmentsNumber?: number;
   responseCode?: number;
+  // Audit trail — datos que Transbank retorna pero que antes se descartaban
+  vci?: string;            // Verification Code Identifier — tipo de validación del pago
+  cardNumber?: string;     // Últimos 4 dígitos de la tarjeta (para auditoría)
+  accountingDate?: string; // Fecha contable "MMDD" de Transbank
+  transactionDate?: Date;  // Fecha/hora real de la transacción
   abortedReason?: string;
   polledAt?: Date;
   createdAt: Date;
@@ -40,6 +45,11 @@ export interface WebpayCommitData {
   installmentsNumber: number;
   installmentsAmount: number;
   responseCode: number;
+  // Audit trail — datos completos de Transbank para reconciliation
+  vci: string;
+  cardNumber?: string;       // Últimos 4 dígitos (puede no venir en algunos estados)
+  accountingDate: string;    // "MMDD"
+  transactionDate: string;   // ISO date string de Transbank
 }
 
 /**
@@ -91,6 +101,11 @@ export class WebpayTransaction {
     this.props.installmentsNumber = data.installmentsNumber;
     this.props.installmentsAmount = data.installmentsAmount;
     this.props.responseCode = data.responseCode;
+    // Audit trail — campos de Transbank para reconciliation contable
+    this.props.vci = data.vci;
+    this.props.cardNumber = data.cardNumber;
+    this.props.accountingDate = data.accountingDate;
+    this.props.transactionDate = new Date(data.transactionDate);
   }
 
   public markAsRejected(responseCode?: number): void {

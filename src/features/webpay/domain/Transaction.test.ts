@@ -20,13 +20,7 @@ function applyStatus(tx: WebpayTransaction, status: TransactionStatus) {
     case "INITIALIZED":
       break; // Already initialized
     case "AUTHORIZED":
-      tx.markAsAuthorized({
-        authorizationCode: "AUTH001",
-        paymentTypeCode: "VD",
-        installmentsNumber: 1,
-        installmentsAmount: 5000,
-        responseCode: 0,
-      });
+      tx.markAsAuthorized(validCommitData);
       break;
     case "REJECTED":
       tx.markAsRejected(-1);
@@ -38,13 +32,7 @@ function applyStatus(tx: WebpayTransaction, status: TransactionStatus) {
       tx.markAsFailed();
       break;
     case "REVERSED":
-      tx.markAsAuthorized({
-        authorizationCode: "AUTH001",
-        paymentTypeCode: "VD",
-        installmentsNumber: 1,
-        installmentsAmount: 5000,
-        responseCode: 0,
-      });
+      tx.markAsAuthorized(validCommitData);
       tx.markAsReversed();
       break;
   }
@@ -56,6 +44,11 @@ const validCommitData: WebpayCommitData = {
   installmentsNumber: 1,
   installmentsAmount: 5000,
   responseCode: 0,
+  // Audit trail
+  vci: "TSO",
+  cardNumber: "1234",
+  accountingDate: "0101",
+  transactionDate: "2026-01-01T00:00:00.000Z",
 };
 
 // ─── Factory Method ───────────────────────────────────────────────────────────
@@ -121,6 +114,27 @@ describe("State transitions", () => {
       expect(tx.props.paymentTypeCode).toBe("VD");
       expect(tx.props.installmentsNumber).toBe(1);
       expect(tx.props.responseCode).toBe(0);
+    });
+
+    it("stores audit trail fields (vci, cardNumber, accountingDate, transactionDate)", () => {
+      const tx = createTransaction();
+      tx.markAsAuthorized(validCommitData);
+
+      expect(tx.props.vci).toBe("TSO");
+      expect(tx.props.cardNumber).toBe("1234");
+      expect(tx.props.accountingDate).toBe("0101");
+      expect(tx.props.transactionDate).toBeInstanceOf(Date);
+      expect(tx.props.transactionDate?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    });
+
+    it("handles optional cardNumber (undefined when not provided by Transbank)", () => {
+      const tx = createTransaction();
+      tx.markAsAuthorized({
+        ...validCommitData,
+        cardNumber: undefined,
+      });
+
+      expect(tx.props.cardNumber).toBeUndefined();
     });
 
     it("throws when not INITIALIZED", () => {
