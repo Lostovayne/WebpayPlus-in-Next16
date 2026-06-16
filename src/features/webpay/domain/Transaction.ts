@@ -43,7 +43,7 @@ export interface WebpayCommitData {
   authorizationCode: string;
   paymentTypeCode: string;
   installmentsNumber: number;
-  installmentsAmount: number;
+  installmentsAmount?: number; // Puede no venir en transacciones de débito
   responseCode: number;
   // Audit trail — datos completos de Transbank para reconciliation
   vci: string;
@@ -113,9 +113,10 @@ export class WebpayTransaction {
     this.props.installmentsAmount = data.installmentsAmount;
     this.props.responseCode = data.responseCode;
     // Audit trail — campos de Transbank para reconciliation contable
-    this.props.vci = data.vci;
-    this.props.accountingDate = data.accountingDate;
-    this.props.cardNumber = data.cardNumber;
+    // Normalizar empty strings a undefined para consistencia en BD
+    this.props.vci = data.vci || undefined;
+    this.props.accountingDate = data.accountingDate || undefined;
+    this.props.cardNumber = data.cardNumber || undefined;
     this.props.transactionDate = parsedDate;
   }
 
@@ -132,11 +133,12 @@ export class WebpayTransaction {
   }
 
   public markAsFailed(): void {
-    // CRÍTICO: Una transacción AUTHORIZED jamás se puede marcar como FAILED.
-    // Si Transbank ya cobró, hacer un rollback de estado sería un desastre contable.
-    if (this.props.status === "AUTHORIZED") {
+    // CRÍTICO: Una transacción en estado terminal jamás se puede marcar como FAILED.
+    // Si Transbank ya cobró (AUTHORIZED), hacer un rollback sería un desastre contable.
+    // Si fue REJECTED/ABORTED/REVERSED, sobreescribir pierde información valiosa.
+    if (this.props.status !== "INITIALIZED") {
       throw new Error(
-        `[Domain] Violación de integridad: No se puede marcar FAILED una transacción ya AUTHORIZED (${this.props.id}). Usa requestRefund.`,
+        `[Domain] No se puede marcar FAILED una transacción en estado "${this.props.status}" (${this.props.id}).`,
       );
     }
     this.props.status = "FAILED";

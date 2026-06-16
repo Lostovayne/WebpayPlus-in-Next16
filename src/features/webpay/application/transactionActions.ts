@@ -131,12 +131,12 @@ export async function confirmTransactionAction(token: string) {
         authorizationCode: response.authorization_code,
         paymentTypeCode: response.payment_type_code,
         installmentsNumber: response.installments_number,
-        installmentsAmount: response.installments_amount ?? 0,
+        installmentsAmount: response.installments_amount ?? undefined,
         responseCode: response.response_code,
         // Audit trail — datos de Transbank para reconciliation
         vci: response.vci ?? undefined,
         cardNumber: response.card_detail?.card_number?.slice(-4) || undefined,
-        accountingDate: response.accounting_date,
+        accountingDate: response.accounting_date ?? undefined,
         transactionDate: response.transaction_date,
       });
     } else {
@@ -155,19 +155,20 @@ export async function confirmTransactionAction(token: string) {
             authorizationCode: status.authorization_code,
             paymentTypeCode: status.payment_type_code,
             installmentsNumber: status.installments_number,
-            installmentsAmount: status.installments_amount ?? 0,
+            installmentsAmount: status.installments_amount ?? undefined,
             responseCode: status.response_code,
             // Audit trail — datos de Transbank para reconciliation
             vci: status.vci ?? undefined,
             cardNumber: status.card_detail?.card_number?.slice(-4) || undefined,
-            accountingDate: status.accounting_date,
+            accountingDate: status.accounting_date ?? undefined,
             transactionDate: status.transaction_date,
           });
         } else {
           transaction.markAsRejected(status.response_code);
         }
-      } catch {
-        // getTransactionStatus also failed — mark as FAILED
+      } catch (statusError) {
+        // getTransactionStatus also failed — mark as FAILED with observability
+        console.error("[Webpay] Fallback getTransactionStatus failed after 422:", statusError);
         transaction.markAsFailed();
       }
     } else {
@@ -250,12 +251,12 @@ export async function pollStaleTransactionsAction(): Promise<{
           authorizationCode: status.authorization_code,
           paymentTypeCode: status.payment_type_code,
           installmentsNumber: status.installments_number,
-          installmentsAmount: status.installments_amount ?? 0,
+          installmentsAmount: status.installments_amount ?? undefined,
           responseCode: status.response_code,
           // Audit trail — datos de Transbank para reconciliation
           vci: status.vci ?? undefined,
           cardNumber: status.card_detail?.card_number?.slice(-4) || undefined,
-          accountingDate: status.accounting_date,
+          accountingDate: status.accounting_date ?? undefined,
           transactionDate: status.transaction_date,
         });
         authorized++;

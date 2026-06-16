@@ -219,7 +219,17 @@ describe("State transitions", () => {
 
     it("throws when AUTHORIZED (cannot rollback)", () => {
       const tx = createTransaction({ status: "AUTHORIZED" });
-      expect(() => tx.markAsFailed()).toThrow("No se puede marcar FAILED una transacción ya AUTHORIZED");
+      expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "AUTHORIZED"');
+    });
+
+    it("throws when REJECTED (preserves rejection reason)", () => {
+      const tx = createTransaction({ status: "REJECTED" });
+      expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "REJECTED"');
+    });
+
+    it("throws when ABORTED (preserves abort reason)", () => {
+      const tx = createTransaction({ status: "ABORTED" });
+      expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "ABORTED"');
     });
   });
 
@@ -287,11 +297,9 @@ describe("Invalid transitions", () => {
     expect(() => tx.markAsAuthorized(validCommitData)).toThrow("requiere estado \"INITIALIZED\"");
   });
 
-  it("allows markAsFailed after markAsRejected (only blocks AUTHORIZED)", () => {
+  it("blocks markAsFailed after markAsRejected (preserves terminal state)", () => {
     const tx = createTransaction();
     tx.markAsRejected(-1);
-    // markAsFailed doesn't check for REJECTED specifically, only blocks AUTHORIZED
-    tx.markAsFailed();
-    expect(tx.props.status).toBe("FAILED");
+    expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "REJECTED"');
   });
 });
