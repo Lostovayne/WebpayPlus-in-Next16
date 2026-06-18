@@ -100,3 +100,22 @@ model WebpayTransaction {
   @@index([status, createdAt, polledAt])
   @@map("webpay_transactions")
 }
+
+// ─── Transaction Audit Log (append-only) ────────────────────────────────────
+// Records every state transition and important event for a transaction.
+// Append-only: no updates, no deletes. Used for debugging, compliance, and
+// reconciliation with Transbank.
+
+model TransactionAuditLog {
+  id            String   @id @default(uuid())
+  transactionId String   @map("transaction_id")
+  buyOrder      String   @map("buy_order") @db.VarChar(26)
+  event         String   @db.VarChar(50) // INITIALIZED, AUTHORIZED, CONFIRMED, ABORTED, REJECTED, REVERSED, POLLED, MARKED_FAILED
+  details       Json?    // Arbitrary event payload (token, auth code, error, etc.)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([transactionId])
+  @@index([buyOrder])
+  @@index([event, createdAt])
+  @@map("transaction_audit_log")
+}
