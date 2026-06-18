@@ -3,6 +3,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { twoFactor } from "better-auth/plugins/two-factor";
 import { multiSession } from "better-auth/plugins/multi-session";
 import { prisma } from "@/shared/lib/prisma";
+import logger from "@/shared/lib/logger";
 import { env } from "@/shared/env";
 import { createUpstashSecondaryStorage } from "./infrastructure/upstash-secondary-storage";
 import {
@@ -131,7 +132,7 @@ export const auth = betterAuth({
       handler: (promise) => {
         // Fire-and-forget: email sending shouldn't delay the response
         promise.catch((err) => {
-          console.error("[Auth] Background task error:", err);
+          logger.error({ err }, "[Auth] Background task error");
         });
       },
     },
@@ -145,47 +146,31 @@ export const auth = betterAuth({
     session: {
       create: {
         after: async (session, ctx) => {
-          if (process.env.NODE_ENV === "development") {
-            console.debug(
-              JSON.stringify({
-                event: "session.create",
-                userId: session.userId,
-                ipAddress: ctx?.request?.headers.get("x-forwarded-for"),
-                userAgent: ctx?.request?.headers.get("user-agent"),
-                timestamp: new Date().toISOString(),
-              }),
-            );
-          }
+          logger.debug({
+            event: "session.create",
+            userId: session.userId,
+            ipAddress: ctx?.request?.headers.get("x-forwarded-for"),
+            userAgent: ctx?.request?.headers.get("user-agent"),
+          }, "[Auth] Session created");
         },
       },
       delete: {
         after: async (session) => {
-          if (process.env.NODE_ENV === "development") {
-            console.debug(
-              JSON.stringify({
-                event: "session.delete",
-                sessionId: session.id,
-                userId: session.userId,
-                timestamp: new Date().toISOString(),
-              }),
-            );
-          }
+          logger.debug({
+            event: "session.delete",
+            sessionId: session.id,
+            userId: session.userId,
+          }, "[Auth] Session deleted");
         },
       },
     },
     user: {
       update: {
         after: async (user, ctx) => {
-          // Log email changes (compare with old data if available)
-          if (process.env.NODE_ENV === "development") {
-            console.debug(
-              JSON.stringify({
-                event: "user.update",
-                userId: user.id,
-                timestamp: new Date().toISOString(),
-              }),
-            );
-          }
+          logger.debug({
+            event: "user.update",
+            userId: user.id,
+          }, "[Auth] User updated");
         },
       },
     },

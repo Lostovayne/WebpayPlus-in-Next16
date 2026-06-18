@@ -1,4 +1,5 @@
 import { pollStaleTransactionsAction } from "@/features/webpay/application/transactionActions";
+import logger from "@/shared/lib/logger";
 import { env } from "@/shared/env";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
       ...result,
     });
   } catch (error) {
-    console.error("[Worker Poll] Error durante el polling:", error);
+    logger.error({ err: error }, "[Worker Poll] Error durante el polling");
     return NextResponse.json({ ok: false, error: "Internal polling error" }, { status: 500 });
   }
 }

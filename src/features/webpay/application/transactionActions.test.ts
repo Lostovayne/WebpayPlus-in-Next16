@@ -255,14 +255,16 @@ describe("abortTransactionAction", () => {
   });
 
   it("does nothing when buyOrder not found (logs warning)", async () => {
-    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { default: logger } = await import("@/shared/lib/logger");
+    const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
     await abortTransactionAction("tbk_token_123", "NONEXISTENT");
 
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("NONEXISTENT"),
+    expect(loggerSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ buyOrder: "NONEXISTENT" }),
+      expect.stringContaining("buyOrder no encontrado"),
     );
-    consoleSpy.mockRestore();
+    loggerSpy.mockRestore();
   });
 
   it("does nothing when transaction is already terminal", async () => {

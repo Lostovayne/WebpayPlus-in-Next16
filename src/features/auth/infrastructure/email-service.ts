@@ -1,5 +1,6 @@
 import { Resend } from "resend";
 import { env } from "@/shared/env";
+import logger from "@/shared/lib/logger";
 
 // Only initialize Resend if API key is configured (optional in dev)
 const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
@@ -80,7 +81,7 @@ export async function sendVerificationEmail(
   url: string,
 ): Promise<void> {
   if (!resend) {
-    console.debug(`[Auth] Verification email (dev mode, not sent): ${email}`);
+    logger.debug({ email }, "[Auth] Verification email (dev mode, not sent)");
     return;
   }
   await resend.emails.send({
@@ -96,7 +97,7 @@ export async function sendOTPEmail(
   otp: string,
 ): Promise<void> {
   if (!resend) {
-    console.debug(`[Auth] OTP email (dev mode, not sent): ${email}`);
+    logger.debug({ email }, "[Auth] OTP email (dev mode, not sent)");
     return;
   }
   await resend.emails.send({
@@ -112,7 +113,7 @@ export async function sendPasswordResetEmail(
   url: string,
 ): Promise<void> {
   if (!resend) {
-    console.debug(`[Auth] Password reset email (dev mode, not sent): ${email}`);
+    logger.debug({ email }, "[Auth] Password reset email (dev mode, not sent)");
     return;
   }
   await resend.emails.send({

@@ -1,6 +1,7 @@
 "use server";
 
 import { env } from "@/shared/env";
+import logger from "@/shared/lib/logger";
 import { redirect } from "next/navigation";
 import { WebpayTransaction } from "../domain/Transaction";
 import { transactionRepository } from "../infrastructure/PrismaTransactionRepository";
@@ -168,7 +169,7 @@ export async function confirmTransactionAction(token: string) {
         }
       } catch (statusError) {
         // getTransactionStatus also failed — mark as FAILED with observability
-        console.error("[Webpay] Fallback getTransactionStatus failed after 422:", statusError);
+        logger.error({ err: statusError, token }, "[Webpay] Fallback getTransactionStatus failed after 422");
         transaction.markAsFailed();
       }
     } else {
@@ -197,9 +198,7 @@ export async function abortTransactionAction(tbkToken: string, buyOrder: string)
   const transaction = await transactionRepository.findByBuyOrder(buyOrder);
 
   if (!transaction) {
-    console.warn(
-      `[Webpay] abortTransactionAction: buyOrder "${buyOrder}" no encontrado. TBK_TOKEN: ${tbkToken}`,
-    );
+    logger.warn({ buyOrder, tbkToken }, "[Webpay] abortTransactionAction: buyOrder no encontrado");
     return;
   }
 
