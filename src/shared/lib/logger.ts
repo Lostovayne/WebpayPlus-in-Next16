@@ -9,8 +9,8 @@ import pino from "pino";
  */
 const logger = pino({
   level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === "production" ? "info" : "debug"),
-  // pino-pretty solo en desarrollo — en prod es JSON puro
-  ...(process.env.NODE_ENV !== "production" && {
+  // pino-pretty solo en development — en staging/production es JSON puro
+  ...(process.env.NODE_ENV === "development" && {
     transport: {
       target: "pino-pretty",
       options: {

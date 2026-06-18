@@ -290,6 +290,15 @@ export async function pollStaleTransactionsAction(): Promise<{
     try {
       const status = await getGateway().getTransactionStatus(token);
 
+      // Race condition guard: re-read from DB after Transbank call.
+      // The return handler may have already processed this transaction
+      // while we were waiting for Transbank's response.
+      const fresh = await transactionRepository.findByToken(token);
+      if (fresh?.isTerminal) {
+        // Already processed by return handler — skip silently
+        continue;
+      }
+
       if (status.status === "AUTHORIZED" && status.response_code === 0) {
         transaction.markAsAuthorized({
           authorizationCode: status.authorization_code,

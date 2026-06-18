@@ -12,12 +12,10 @@ datasource db {
 enum TransactionStatus {
   INITIALIZED
   AUTHORIZED
-  CONFIRMED
   REJECTED
   FAILED
   ABORTED
   REVERSED
-  POLLED
 }
 
 enum AuditEvent {

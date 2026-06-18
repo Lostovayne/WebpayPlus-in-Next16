@@ -38,7 +38,7 @@ const parsedEnv = envSchema.safeParse({
 });
 
 if (!parsedEnv.success) {
-  logger.fatal({ err: parsedEnv.error.flatten() }, "Invalid environment variables");
+  logger.error({ err: parsedEnv.error.flatten() }, "Invalid environment variables");
   throw new Error("Terminating due to invalid environment variables");
 }
 

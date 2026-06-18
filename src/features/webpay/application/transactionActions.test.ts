@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { WebpayTransaction } from "../domain/Transaction";
+import { prisma } from "@/shared/lib/prisma";
 
 // ─── Mock Variables (module scope — vi.hoisted removed in vitest 4.x) ─────────
 
@@ -693,5 +694,128 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
     const result = await confirmTransactionAction("tok_audit_7");
 
     expect(result.status).toBe("FAILED");
+  });
+});
+
+// ─── Audit Log Assertions ──────────────────────────────────────────────────
+
+describe("Audit logging", () => {
+  const auditLogMock = vi.mocked(prisma.transactionAuditLog.create);
+
+  beforeEach(() => {
+    auditLogMock.mockClear();
+  });
+
+  it("logs INITIALIZED on initiateTransactionAction", async () => {
+    mockGateway._createTransactionMock.mockResolvedValueOnce({
+      token: "tbk_init_audit_1",
+      url: "https://webpay3g.transbank.cl/webpayserver/init_transaction",
+    });
+
+    await expect(initiateTransactionAction(5000)).rejects.toThrow("NEXT_REDIRECT");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "INITIALIZED",
+          buyOrder: expect.stringContaining("BO"),
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("logs MARKED_FAILED when Transbank rejects on initiate", async () => {
+    mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
+
+    await expect(initiateTransactionAction(5000)).rejects.toThrow("Fallo al inicializar Gateway");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "MARKED_FAILED",
+        }),
+      }),
+    );
+  });
+
+  it("logs AUTHORIZED on confirmTransactionAction", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_confirm_audit_1");
+    seed(tx);
+
+    mockCommitAuthorized();
+
+    await confirmTransactionAction("tok_confirm_audit_1");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "AUTHORIZED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("logs REJECTED on confirmTransactionAction when bank rejects", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_confirm_audit_2");
+    seed(tx);
+
+    mockCommitRejected(-1);
+
+    await confirmTransactionAction("tok_confirm_audit_2");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "REJECTED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("logs ABORTED on abortTransactionAction", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    seed(tx);
+
+    await abortTransactionAction("tbk_token_123", "BO123");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "ABORTED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("logs MARKED_FAILED when confirmTransactionAction fallback fails", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_confirm_audit_3");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockRejectedValueOnce(
+      new TransbankAlreadyProcessedError("tok_confirm_audit_3"),
+    );
+    mockGateway._getTransactionStatusMock.mockRejectedValueOnce(new Error("Network error"));
+
+    await confirmTransactionAction("tok_confirm_audit_3");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "MARKED_FAILED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
   });
 });
