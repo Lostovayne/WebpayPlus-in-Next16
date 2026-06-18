@@ -1,7 +1,10 @@
 "use server";
 
 import { env } from "@/shared/env";
+import logger from "@/shared/lib/logger";
+import { prisma } from "@/shared/lib/prisma";
 import { redirect } from "next/navigation";
+import { AuditEvent, Prisma } from "generated/prisma";
 import { WebpayTransaction } from "../domain/Transaction";
 import { transactionRepository } from "../infrastructure/PrismaTransactionRepository";
 import {
@@ -33,6 +36,29 @@ export async function __resetGatewayForTesting(): Promise<void> {
     throw new Error("__resetGatewayForTesting is not allowed in production");
   }
   gateway = null;
+}
+
+// ─── Audit Log Helper ──────────────────────────────────────────────────────
+
+async function logAuditEvent(
+  transactionId: string,
+  buyOrder: string,
+  event: AuditEvent,
+  details?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await prisma.transactionAuditLog.create({
+      data: {
+        transactionId,
+        buyOrder,
+        event,
+        ...(details ? { details: details as Prisma.InputJsonValue } : {}),
+      },
+    });
+  } catch (err) {
+    // Audit log failure must NOT break the transaction flow
+    logger.warn({ err, transactionId, buyOrder, event }, "[Webpay] Failed to write audit log");
+  }
 }
 
 // ─── Helper: buy_order seguro ────────────────────────────────────────────────
@@ -76,6 +102,7 @@ export async function initiateTransactionAction(amount: number): Promise<never> 
 
   // Persistir ANTES de tocar red externa
   await transactionRepository.save(transaction);
+  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "INITIALIZED", { amount });
 
   const returnUrl = `${env.NEXT_PUBLIC_APP_URL}/api/webpay/return`;
   let redirectTarget: string;
@@ -95,6 +122,7 @@ export async function initiateTransactionAction(amount: number): Promise<never> 
   } catch (err) {
     transaction.markAsFailed();
     await transactionRepository.save(transaction);
+    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: String(err) });
     throw new Error(`Fallo al inicializar Gateway de pago: ${String(err)}`);
   }
 
@@ -131,8 +159,13 @@ export async function confirmTransactionAction(token: string) {
         authorizationCode: response.authorization_code,
         paymentTypeCode: response.payment_type_code,
         installmentsNumber: response.installments_number,
-        installmentsAmount: response.installments_amount ?? 0,
+        installmentsAmount: response.installments_amount ?? undefined,
         responseCode: response.response_code,
+        // Audit trail — datos de Transbank para reconciliation
+        vci: response.vci ?? undefined,
+        cardNumber: response.card_detail?.card_number?.slice(-4) || undefined,
+        accountingDate: response.accounting_date ?? undefined,
+        transactionDate: response.transaction_date,
       });
     } else {
       transaction.markAsRejected(response.response_code);
@@ -150,14 +183,20 @@ export async function confirmTransactionAction(token: string) {
             authorizationCode: status.authorization_code,
             paymentTypeCode: status.payment_type_code,
             installmentsNumber: status.installments_number,
-            installmentsAmount: status.installments_amount ?? 0,
+            installmentsAmount: status.installments_amount ?? undefined,
             responseCode: status.response_code,
+            // Audit trail — datos de Transbank para reconciliation
+            vci: status.vci ?? undefined,
+            cardNumber: status.card_detail?.card_number?.slice(-4) || undefined,
+            accountingDate: status.accounting_date ?? undefined,
+            transactionDate: status.transaction_date,
           });
         } else {
           transaction.markAsRejected(status.response_code);
         }
-      } catch {
-        // getTransactionStatus also failed — mark as FAILED
+      } catch (statusError) {
+        // getTransactionStatus also failed — mark as FAILED with observability
+        logger.error({ err: statusError, token }, "[Webpay] Fallback getTransactionStatus failed after 422");
         transaction.markAsFailed();
       }
     } else {
@@ -167,6 +206,22 @@ export async function confirmTransactionAction(token: string) {
   }
 
   await transactionRepository.save(transaction);
+
+  // Audit log after state transition
+  const newStatus = transaction.props.status;
+  if (newStatus === "AUTHORIZED") {
+    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "AUTHORIZED", {
+      authorizationCode: transaction.props.authCode,
+      responseCode: transaction.props.responseCode,
+    });
+  } else if (newStatus === "REJECTED") {
+    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "REJECTED", {
+      responseCode: transaction.props.responseCode,
+    });
+  } else if (newStatus === "FAILED") {
+    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED");
+  }
+
   return transaction.props;
 }
 
@@ -186,9 +241,7 @@ export async function abortTransactionAction(tbkToken: string, buyOrder: string)
   const transaction = await transactionRepository.findByBuyOrder(buyOrder);
 
   if (!transaction) {
-    console.warn(
-      `[Webpay] abortTransactionAction: buyOrder "${buyOrder}" no encontrado. TBK_TOKEN: ${tbkToken}`,
-    );
+    logger.warn({ buyOrder, tbkToken }, "[Webpay] abortTransactionAction: buyOrder no encontrado");
     return;
   }
 
@@ -197,6 +250,7 @@ export async function abortTransactionAction(tbkToken: string, buyOrder: string)
 
   transaction.markAsAbortedByClient(`TBK_TOKEN:${tbkToken.slice(0, 20)}`);
   await transactionRepository.save(transaction);
+  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "ABORTED", { tbkToken: tbkToken.slice(0, 20) });
 }
 
 // ─── Use Case 4: Polling del Worker ─────────────────────────────────────────
@@ -228,6 +282,7 @@ export async function pollStaleTransactionsAction(): Promise<{
       // Sin token nunca se redirigió al banco → fallo técnico en la creación
       transaction.markAsFailed();
       await transactionRepository.save(transaction);
+      await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "no_token" });
       failed++;
       continue;
     }
@@ -235,17 +290,38 @@ export async function pollStaleTransactionsAction(): Promise<{
     try {
       const status = await getGateway().getTransactionStatus(token);
 
+      // Race condition guard: re-read from DB after Transbank call.
+      // The return handler may have already processed this transaction
+      // while we were waiting for Transbank's response.
+      const fresh = await transactionRepository.findByToken(token);
+      if (fresh?.isTerminal) {
+        // Already processed by return handler — skip silently
+        continue;
+      }
+
       if (status.status === "AUTHORIZED" && status.response_code === 0) {
         transaction.markAsAuthorized({
           authorizationCode: status.authorization_code,
           paymentTypeCode: status.payment_type_code,
           installmentsNumber: status.installments_number,
-          installmentsAmount: status.installments_amount ?? 0,
+          installmentsAmount: status.installments_amount ?? undefined,
+          responseCode: status.response_code,
+          // Audit trail — datos de Transbank para reconciliation
+          vci: status.vci ?? undefined,
+          cardNumber: status.card_detail?.card_number?.slice(-4) || undefined,
+          accountingDate: status.accounting_date ?? undefined,
+          transactionDate: status.transaction_date,
+        });
+        await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "AUTHORIZED", {
+          authorizationCode: status.authorization_code,
           responseCode: status.response_code,
         });
         authorized++;
       } else if (status.response_code !== undefined) {
         transaction.markAsRejected(status.response_code);
+        await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "REJECTED", {
+          responseCode: status.response_code,
+        });
         rejected++;
       } else {
         // Estado ambiguo — dejar para el próximo ciclo
@@ -261,6 +337,7 @@ export async function pollStaleTransactionsAction(): Promise<{
       if (transaction.props.createdAt < sevenDaysAgo) {
         transaction.markAsFailed();
         await transactionRepository.save(transaction);
+        await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "stale_7d" });
         failed++;
       }
       // Si no, dejamos para el próximo ciclo del cron — polledAt NO se modifica

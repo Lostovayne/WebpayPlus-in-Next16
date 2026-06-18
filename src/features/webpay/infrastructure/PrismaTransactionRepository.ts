@@ -24,6 +24,10 @@ export class PrismaTransactionRepository {
         amount: d.amount,
         status: d.status,
         token: d.token,
+        vci: d.vci,
+        cardNumber: d.cardNumber,
+        accountingDate: d.accountingDate,
+        transactionDate: d.transactionDate,
         authCode: d.authCode,
         paymentTypeCode: d.paymentTypeCode,
         installmentsAmount: d.installmentsAmount,
@@ -35,6 +39,10 @@ export class PrismaTransactionRepository {
       update: {
         status: d.status,
         token: d.token,
+        vci: d.vci,
+        cardNumber: d.cardNumber,
+        accountingDate: d.accountingDate,
+        transactionDate: d.transactionDate,
         authCode: d.authCode,
         paymentTypeCode: d.paymentTypeCode,
         installmentsAmount: d.installmentsAmount,
@@ -102,6 +110,10 @@ export class PrismaTransactionRepository {
     amount: { toNumber(): number };
     status: string;
     token: string | null;
+    vci: string | null;
+    cardNumber: string | null;
+    accountingDate: string | null;
+    transactionDate: Date | null;
     authCode: string | null;
     paymentTypeCode: string | null;
     installmentsAmount: { toNumber(): number } | null;
@@ -111,15 +123,23 @@ export class PrismaTransactionRepository {
     polledAt: Date | null;
     createdAt: Date;
   }): WebpayTransaction {
+    // Runtime validation: ensure DB status is a valid domain status
+    const validStatuses: readonly string[] = ["INITIALIZED", "AUTHORIZED", "REJECTED", "ABORTED", "FAILED", "REVERSED"];
+    if (!validStatuses.includes(record.status)) {
+      throw new Error(`Corrupted transaction status in DB: "${record.status}" for id=${record.id}`);
+    }
+
     return new WebpayTransaction({
       id: record.id,
       buyOrder: record.buyOrder,
       sessionId: record.sessionId,
       amount: record.amount.toNumber(),
-      // Casting tipado: el status en BD siempre es uno de los valores válidos.
-      // Si hubiera corrupción de datos, fallará en runtime de forma explícita.
       status: record.status as TransactionStatus,
       token: record.token ?? undefined,
+      vci: record.vci ?? undefined,
+      cardNumber: record.cardNumber ?? undefined,
+      accountingDate: record.accountingDate ?? undefined,
+      transactionDate: record.transactionDate ?? undefined,
       authCode: record.authCode ?? undefined,
       paymentTypeCode: record.paymentTypeCode ?? undefined,
       installmentsAmount: record.installmentsAmount?.toNumber(),

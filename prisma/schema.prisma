@@ -7,13 +7,101 @@ datasource db {
   provider = "postgresql"
 }
 
+// ─── Enums ─────────────────────────────────────────────────────────────────
+
+enum TransactionStatus {
+  INITIALIZED
+  AUTHORIZED
+  REJECTED
+  FAILED
+  ABORTED
+  REVERSED
+}
+
+enum AuditEvent {
+  INITIALIZED
+  AUTHORIZED
+  CONFIRMED
+  ABORTED
+  REJECTED
+  REVERSED
+  POLLED
+  MARKED_FAILED
+}
+
+// ─── BetterAuth Models ──────────────────────────────────────────────────────
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
+
+  accounts  Account[]
+  sessions  Session[]
+}
+
+model Session {
+  id           String   @id
+  userId       String
+  token        String   @unique
+  expiresAt    DateTime
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                String   @id
+  userId            String
+  accountId         String
+  providerId        String
+  accessToken       String?
+  refreshToken      String?
+  accessTokenExpiresAt DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope             String?
+  idToken           String?
+  password          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([identifier, value])
+}
+
+// ─── Webpay Transaction Model ──────────────────────────────────────────────
+
 model WebpayTransaction {
   id        String  @id @default(uuid(7))
   buyOrder  String  @unique @map("buy_order") @db.VarChar(26)
   sessionId String  @map("session_id") @db.VarChar(61)
   amount    Decimal @db.Decimal(17, 2)
   token     String? @unique @db.VarChar(64)
-  status    String  @default("INITIALIZED") @db.VarChar(20)
+  status    TransactionStatus @default(INITIALIZED)
 
   // Return data via callback
   vci                String?   @db.VarChar(10)
@@ -33,4 +121,23 @@ model WebpayTransaction {
 
   @@index([status, createdAt, polledAt])
   @@map("webpay_transactions")
+}
+
+// ─── Transaction Audit Log (append-only) ────────────────────────────────────
+// Records every state transition and important event for a transaction.
+// Append-only: no updates, no deletes. Used for debugging, compliance, and
+// reconciliation with Transbank.
+
+model TransactionAuditLog {
+  id            String   @id @default(uuid())
+  transactionId String   @map("transaction_id")
+  buyOrder      String   @map("buy_order") @db.VarChar(26)
+  event         AuditEvent
+  details       Json?    // Arbitrary event payload (token, auth code, error, etc.)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([transactionId])
+  @@index([buyOrder])
+  @@index([event, createdAt])
+  @@map("transaction_audit_log")
 }

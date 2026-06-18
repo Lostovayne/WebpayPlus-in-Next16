@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { WebpayTransaction } from "@/features/webpay/domain/Transaction";
+import { prisma } from "@/shared/lib/prisma";
 
 // ─── Mock Variables (module scope — vi.hoisted removed in vitest 4.x) ─────────
 
@@ -53,6 +54,14 @@ vi.mock("@/shared/env", () => ({
     WEBPAY_ENVIRONMENT: "integration",
     NEXT_PUBLIC_APP_URL: "http://localhost:3000",
     CRON_SECRET: "test-cron-secret",
+  },
+}));
+
+vi.mock("@/shared/lib/prisma", () => ({
+  prisma: {
+    transactionAuditLog: {
+      create: vi.fn(async () => ({})),
+    },
   },
 }));
 
@@ -278,6 +287,9 @@ describe("GET /api/webpay/return", () => {
         installmentsNumber: 1,
         installmentsAmount: 5000,
         responseCode: 0,
+        vci: "TSO",
+        accountingDate: "0101",
+        transactionDate: "2026-01-01T00:00:00.000Z",
       });
       seed(tx);
 
@@ -320,5 +332,77 @@ describe("GET /api/webpay/return", () => {
       // Restore
       mockRepoStore.get = originalFindByToken;
     });
+  });
+});
+
+// ─── Audit Log Assertions ──────────────────────────────────────────────────
+
+describe("Audit logging", () => {
+  const auditLogMock = vi.mocked(prisma.transactionAuditLog.create);
+
+  beforeEach(() => {
+    auditLogMock.mockClear();
+  });
+
+  it("logs AUTHORIZED on successful POST confirm", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_authorized");
+    seed(tx);
+
+    mockCommitAuthorized();
+
+    const req = createPostRequest("token_ws=tok_audit_authorized");
+    await POST(req);
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "AUTHORIZED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("logs ABORTED on POST with TBK_TOKEN", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    seed(tx);
+
+    const req = createPostRequest(
+      "TBK_TOKEN=tbk_cancel_123&TBK_ORDEN_COMPRA=BO123&TBK_ID_SESION=session-1",
+    );
+    await POST(req);
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "ABORTED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("logs REJECTED on POST when bank rejects", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_rejected");
+    seed(tx);
+
+    mockCommitRejected(-1);
+
+    const req = createPostRequest("token_ws=tok_audit_rejected");
+    await POST(req);
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "REJECTED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
   });
 });

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": "e9a87d89baaf5b95e06dec93aec872938ca994de3b4e084d51ae30dd9bee12de",
+      "rule_id": "js/no-ssrf",
+      "file": "C:/Users/Deus/Documents/dev/webpay/src/features/auth/infrastructure/upstash-secondary-storage.ts",
+      "line": 21
+    },
+    {
+      "fingerprint": "e61712609e8db5cbb6b26baeeeb082bcc618479360611178b691b4a61d48bca1",
+      "rule_id": "js/no-ssrf",
+      "file": "C:/Users/Deus/Documents/dev/webpay/src/features/webpay/infrastructure/TransbankGateway.ts",
+      "line": 88
+    },
+    {
+      "fingerprint": "0713078a6169e2e3a713f07a3ef6fde1c7c6d614ffd34a02b13856a78aadd62a",
+      "rule_id": "js/no-ssrf",
+      "file": "C:/Users/Deus/Documents/dev/webpay/src/features/webpay/infrastructure/TransbankGateway.ts",
+      "line": 117
+    },
+    {
+      "fingerprint": "d544d8956ad4925c56e608e8d0be8dd1c2bac14342af16c90051475ef64dce84",
+      "rule_id": "js/no-ssrf",
+      "file": "C:/Users/Deus/Documents/dev/webpay/src/features/webpay/infrastructure/TransbankGateway.ts",
+      "line": 150
+    },
+    {
+      "fingerprint": "f0d59864025bad20f1314b5cbe44e9911f7350cbf43ea802e04a00fe74699ea9",
+      "rule_id": "js/no-ssrf",
+      "file": "C:/Users/Deus/Documents/dev/webpay/src/features/webpay/infrastructure/TransbankGateway.ts",
+      "line": 179
+    }
+  ]
+}

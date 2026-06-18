@@ -1,6 +1,8 @@
 import { pollStaleTransactionsAction } from "@/features/webpay/application/transactionActions";
+import logger from "@/shared/lib/logger";
 import { env } from "@/shared/env";
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
 
 /**
  * GET /api/webpay/poll — Worker de Polling de Transacciones Abandonadas
@@ -25,7 +27,11 @@ export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const expectedAuth = `Bearer ${env.CRON_SECRET}`;
 
-  if (authHeader !== expectedAuth) {
+  if (
+    !authHeader ||
+    authHeader.length !== expectedAuth.length ||
+    !timingSafeEqual(Buffer.from(authHeader), Buffer.from(expectedAuth))
+  ) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -38,7 +44,7 @@ export async function GET(req: NextRequest) {
       ...result,
     });
   } catch (error) {
-    console.error("[Worker Poll] Error durante el polling:", error);
+    logger.error({ err: error }, "[Worker Poll] Error durante el polling");
     return NextResponse.json({ ok: false, error: "Internal polling error" }, { status: 500 });
   }
 }

@@ -20,13 +20,7 @@ function applyStatus(tx: WebpayTransaction, status: TransactionStatus) {
     case "INITIALIZED":
       break; // Already initialized
     case "AUTHORIZED":
-      tx.markAsAuthorized({
-        authorizationCode: "AUTH001",
-        paymentTypeCode: "VD",
-        installmentsNumber: 1,
-        installmentsAmount: 5000,
-        responseCode: 0,
-      });
+      tx.markAsAuthorized(validCommitData);
       break;
     case "REJECTED":
       tx.markAsRejected(-1);
@@ -38,13 +32,7 @@ function applyStatus(tx: WebpayTransaction, status: TransactionStatus) {
       tx.markAsFailed();
       break;
     case "REVERSED":
-      tx.markAsAuthorized({
-        authorizationCode: "AUTH001",
-        paymentTypeCode: "VD",
-        installmentsNumber: 1,
-        installmentsAmount: 5000,
-        responseCode: 0,
-      });
+      tx.markAsAuthorized(validCommitData);
       tx.markAsReversed();
       break;
   }
@@ -56,6 +44,11 @@ const validCommitData: WebpayCommitData = {
   installmentsNumber: 1,
   installmentsAmount: 5000,
   responseCode: 0,
+  // Audit trail
+  vci: "TSO",
+  cardNumber: "1234",
+  accountingDate: "0101",
+  transactionDate: "2026-01-01T00:00:00.000Z",
 };
 
 // ─── Factory Method ───────────────────────────────────────────────────────────
@@ -123,6 +116,57 @@ describe("State transitions", () => {
       expect(tx.props.responseCode).toBe(0);
     });
 
+    it("stores audit trail fields (vci, cardNumber, accountingDate, transactionDate)", () => {
+      const tx = createTransaction();
+      tx.markAsAuthorized(validCommitData);
+
+      expect(tx.props.vci).toBe("TSO");
+      expect(tx.props.cardNumber).toBe("1234");
+      expect(tx.props.accountingDate).toBe("0101");
+      expect(tx.props.transactionDate).toBeInstanceOf(Date);
+      expect(tx.props.transactionDate?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    });
+
+    it("handles optional cardNumber (undefined when not provided by Transbank)", () => {
+      const tx = createTransaction();
+      tx.markAsAuthorized({
+        ...validCommitData,
+        cardNumber: undefined,
+      });
+
+      expect(tx.props.cardNumber).toBeUndefined();
+    });
+
+    it("throws when cardNumber exceeds 4 digits (PCI DSS violation)", () => {
+      const tx = createTransaction();
+      expect(() =>
+        tx.markAsAuthorized({
+          ...validCommitData,
+          cardNumber: "12345",
+        }),
+      ).toThrow("cardNumber debe ser máximo 4 dígitos");
+    });
+
+    it("throws when transactionDate is invalid ISO string", () => {
+      const tx = createTransaction();
+      expect(() =>
+        tx.markAsAuthorized({
+          ...validCommitData,
+          transactionDate: "not-a-date",
+        }),
+      ).toThrow("transactionDate inválida");
+    });
+
+    it("throws when transactionDate is empty string", () => {
+      const tx = createTransaction();
+      expect(() =>
+        tx.markAsAuthorized({
+          ...validCommitData,
+          transactionDate: "",
+        }),
+      ).toThrow("transactionDate inválida");
+    });
+
     it("throws when not INITIALIZED", () => {
       const tx = createTransaction({ status: "AUTHORIZED" });
       expect(() => tx.markAsAuthorized(validCommitData)).toThrow("requiere estado \"INITIALIZED\"");
@@ -175,7 +219,17 @@ describe("State transitions", () => {
 
     it("throws when AUTHORIZED (cannot rollback)", () => {
       const tx = createTransaction({ status: "AUTHORIZED" });
-      expect(() => tx.markAsFailed()).toThrow("No se puede marcar FAILED una transacción ya AUTHORIZED");
+      expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "AUTHORIZED"');
+    });
+
+    it("throws when REJECTED (preserves rejection reason)", () => {
+      const tx = createTransaction({ status: "REJECTED" });
+      expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "REJECTED"');
+    });
+
+    it("throws when ABORTED (preserves abort reason)", () => {
+      const tx = createTransaction({ status: "ABORTED" });
+      expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "ABORTED"');
     });
   });
 
@@ -243,11 +297,9 @@ describe("Invalid transitions", () => {
     expect(() => tx.markAsAuthorized(validCommitData)).toThrow("requiere estado \"INITIALIZED\"");
   });
 
-  it("allows markAsFailed after markAsRejected (only blocks AUTHORIZED)", () => {
+  it("blocks markAsFailed after markAsRejected (preserves terminal state)", () => {
     const tx = createTransaction();
     tx.markAsRejected(-1);
-    // markAsFailed doesn't check for REJECTED specifically, only blocks AUTHORIZED
-    tx.markAsFailed();
-    expect(tx.props.status).toBe("FAILED");
+    expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "REJECTED"');
   });
 });

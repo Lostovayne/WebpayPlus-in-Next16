@@ -2,6 +2,7 @@ import {
   abortTransactionAction,
   confirmTransactionAction,
 } from "@/features/webpay/application/transactionActions";
+import logger from "@/shared/lib/logger";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
   const token = params.get("token_ws");
   if (!token) {
     // Payload vacío o manipulado — no deberíamos llegar aquí en condiciones normales
-    console.error("[Webpay POST] Payload sin token_ws ni TBK_TOKEN:", text);
+    logger.error({ payload: text }, "[Webpay POST] Payload sin token_ws ni TBK_TOKEN");
     return NextResponse.redirect(new URL("/checkout/error?reason=invalid_payload", req.url), 303);
   }
 
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
       303,
     );
   } catch (error) {
-    console.error("[Webpay POST] Error en confirmación:", error);
+    logger.error({ err: error }, "[Webpay POST] Error en confirmación");
     return NextResponse.redirect(new URL("/checkout/error?reason=system_failed", req.url), 303);
   }
 }
@@ -108,7 +109,7 @@ export async function GET(req: NextRequest) {
       303,
     );
   } catch (error) {
-    console.error("[Webpay GET] Error en confirmación:", error);
+    logger.error({ err: error }, "[Webpay GET] Error en confirmación");
     return NextResponse.redirect(new URL("/checkout/error?reason=system_failed", req.url), 303);
   }
 }

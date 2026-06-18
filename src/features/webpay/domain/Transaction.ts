@@ -28,6 +28,11 @@ export interface WebpayTransactionProps {
   installmentsAmount?: number;
   installmentsNumber?: number;
   responseCode?: number;
+  // Audit trail — datos que Transbank retorna pero que antes se descartaban
+  vci?: string;            // Verification Code Identifier — tipo de validación del pago
+  cardNumber?: string;     // Últimos 4 dígitos de la tarjeta (para auditoría)
+  accountingDate?: string; // Fecha contable "MMDD" de Transbank
+  transactionDate?: Date;  // Fecha/hora real de la transacción
   abortedReason?: string;
   polledAt?: Date;
   createdAt: Date;
@@ -38,8 +43,13 @@ export interface WebpayCommitData {
   authorizationCode: string;
   paymentTypeCode: string;
   installmentsNumber: number;
-  installmentsAmount: number;
+  installmentsAmount?: number; // Puede no venir en transacciones de débito
   responseCode: number;
+  // Audit trail — datos completos de Transbank para reconciliation
+  vci: string;
+  cardNumber?: string;       // Últimos 4 dígitos (puede no venir en algunos estados)
+  accountingDate: string;    // "MMDD"
+  transactionDate: string;   // ISO date string de Transbank
 }
 
 /**
@@ -85,12 +95,29 @@ export class WebpayTransaction {
 
   public markAsAuthorized(data: WebpayCommitData): void {
     this.assertStatus("INITIALIZED", "markAsAuthorized");
+
+    // Validar ANTES de mutar el estado — si algo falla, la transacción queda en INITIALIZED
+    if (data.cardNumber !== undefined && data.cardNumber.length > 4) {
+      throw new Error(`[Domain] cardNumber debe ser máximo 4 dígitos (PCI DSS). Recibido: ${data.cardNumber.length} caracteres.`);
+    }
+    const parsedDate = new Date(data.transactionDate);
+    if (isNaN(parsedDate.getTime())) {
+      throw new Error(`[Domain] transactionDate inválida de Transbank: "${data.transactionDate}". Auditar manualmente.`);
+    }
+
+    // Validaciones pasan → ahora sí mutar el estado
     this.props.status = "AUTHORIZED";
     this.props.authCode = data.authorizationCode;
     this.props.paymentTypeCode = data.paymentTypeCode;
     this.props.installmentsNumber = data.installmentsNumber;
     this.props.installmentsAmount = data.installmentsAmount;
     this.props.responseCode = data.responseCode;
+    // Audit trail — campos de Transbank para reconciliation contable
+    // Normalizar empty strings a undefined para consistencia en BD
+    this.props.vci = data.vci || undefined;
+    this.props.accountingDate = data.accountingDate || undefined;
+    this.props.cardNumber = data.cardNumber || undefined;
+    this.props.transactionDate = parsedDate;
   }
 
   public markAsRejected(responseCode?: number): void {
@@ -106,11 +133,12 @@ export class WebpayTransaction {
   }
 
   public markAsFailed(): void {
-    // CRÍTICO: Una transacción AUTHORIZED jamás se puede marcar como FAILED.
-    // Si Transbank ya cobró, hacer un rollback de estado sería un desastre contable.
-    if (this.props.status === "AUTHORIZED") {
+    // CRÍTICO: Una transacción en estado terminal jamás se puede marcar como FAILED.
+    // Si Transbank ya cobró (AUTHORIZED), hacer un rollback sería un desastre contable.
+    // Si fue REJECTED/ABORTED/REVERSED, sobreescribir pierde información valiosa.
+    if (this.props.status !== "INITIALIZED") {
       throw new Error(
-        `[Domain] Violación de integridad: No se puede marcar FAILED una transacción ya AUTHORIZED (${this.props.id}). Usa requestRefund.`,
+        `[Domain] No se puede marcar FAILED una transacción en estado "${this.props.status}" (${this.props.id}).`,
       );
     }
     this.props.status = "FAILED";

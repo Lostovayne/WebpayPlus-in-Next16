@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { WebpayTransaction } from "../domain/Transaction";
+import { prisma } from "@/shared/lib/prisma";
 
 // ─── Mock Variables (module scope — vi.hoisted removed in vitest 4.x) ─────────
 
@@ -61,6 +62,14 @@ vi.mock("@/shared/env", () => ({
   },
 }));
 
+vi.mock("@/shared/lib/prisma", () => ({
+  prisma: {
+    transactionAuditLog: {
+      create: vi.fn(async () => ({})),
+    },
+  },
+}));
+
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`);
@@ -96,6 +105,7 @@ function mockCommitAuthorized(overrides?: Record<string, unknown>) {
     session_id: "session-1", accounting_date: "0101",
     transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
     payment_type_code: "VD", response_code: 0, installments_number: 1,
+    card_detail: { card_number: "1234567890123456" },
     ...overrides,
   });
 }
@@ -115,6 +125,7 @@ function mockGetStatusAuthorized() {
     session_id: "session-1", accounting_date: "0101",
     transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
     payment_type_code: "VD", response_code: 0, installments_number: 1,
+    card_detail: { card_number: "1234567890123456" },
   });
 }
 
@@ -144,6 +155,11 @@ describe("confirmTransactionAction", () => {
 
       expect(result.status).toBe("AUTHORIZED");
       expect(result.authCode).toBe("AUTH001");
+      // Audit trail — verify new fields are stored
+      expect(result.vci).toBe("TSO");
+      expect(result.cardNumber).toBe("3456"); // last 4 of "1234567890123456"
+      expect(result.accountingDate).toBe("0101");
+      expect(result.transactionDate).toBeInstanceOf(Date);
     });
 
     it("transitions INITIALIZED → REJECTED when Transbank rejects", async () => {
@@ -170,6 +186,9 @@ describe("confirmTransactionAction", () => {
         installmentsNumber: 1,
         installmentsAmount: 5000,
         responseCode: 0,
+        vci: "TSO",
+        accountingDate: "0101",
+        transactionDate: "2026-01-01T00:00:00.000Z",
       });
       seed(tx);
 
@@ -245,14 +264,16 @@ describe("abortTransactionAction", () => {
   });
 
   it("does nothing when buyOrder not found (logs warning)", async () => {
-    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { default: logger } = await import("@/shared/lib/logger");
+    const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
     await abortTransactionAction("tbk_token_123", "NONEXISTENT");
 
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("NONEXISTENT"),
+    expect(loggerSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ buyOrder: "NONEXISTENT" }),
+      expect.stringContaining("buyOrder no encontrado"),
     );
-    consoleSpy.mockRestore();
+    loggerSpy.mockRestore();
   });
 
   it("does nothing when transaction is already terminal", async () => {
@@ -263,6 +284,9 @@ describe("abortTransactionAction", () => {
       installmentsNumber: 1,
       installmentsAmount: 5000,
       responseCode: 0,
+      vci: "TSO",
+      accountingDate: "0101",
+      transactionDate: "2026-01-01T00:00:00.000Z",
     });
     seed(tx);
 
@@ -525,5 +549,273 @@ describe("pollStaleTransactionsAction", () => {
       const updated = mockRepoStore.get(tx.props.id);
       expect(updated!.props.polledAt).toBeUndefined();
     });
+  });
+});
+
+// ─── Audit Trail Tests ────────────────────────────────────────────────────────
+
+describe("Audit trail — verify all 4 fields stored correctly", () => {
+  it("stores vci, cardNumber (last 4), accountingDate, transactionDate from commit", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_1");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockResolvedValueOnce({
+      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "1225",
+      transaction_date: "2026-12-25T15:30:00.000Z", authorization_code: "AUTH999",
+      payment_type_code: "VN", response_code: 0, installments_number: 3,
+      card_detail: { card_number: "4444333322221111" },
+    });
+
+    const result = await confirmTransactionAction("tok_audit_1");
+
+    expect(result.vci).toBe("TSO");
+    expect(result.cardNumber).toBe("1111"); // last 4 of "4444333322221111"
+    expect(result.accountingDate).toBe("1225");
+    expect(result.transactionDate).toBeInstanceOf(Date);
+    expect(result.transactionDate?.toISOString()).toBe("2026-12-25T15:30:00.000Z");
+  });
+
+  it("stores audit trail from 422 fallback (getTransactionStatus)", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_2");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockRejectedValueOnce(
+      new TransbankAlreadyProcessedError("tok_audit_2"),
+    );
+    mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
+      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "0615",
+      transaction_date: "2026-06-15T10:00:00.000Z", authorization_code: "AUTH422",
+      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      card_detail: { card_number: "5555666677778888" },
+    });
+
+    const result = await confirmTransactionAction("tok_audit_2");
+
+    expect(result.vci).toBe("TSO");
+    expect(result.cardNumber).toBe("8888");
+    expect(result.accountingDate).toBe("0615");
+    expect(result.transactionDate).toBeInstanceOf(Date);
+  });
+
+  it("stores audit trail from polling worker", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_3");
+    tx.props.createdAt = new Date(Date.now() - 15 * 60 * 1000);
+    seed(tx);
+
+    mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
+      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "0320",
+      transaction_date: "2026-03-20T08:45:00.000Z", authorization_code: "AUTHPOLL",
+      payment_type_code: "VN", response_code: 0, installments_number: 6,
+      card_detail: { card_number: "9999888877776666" },
+    });
+
+    await pollStaleTransactionsAction();
+
+    const updated = mockRepoStore.get(tx.props.id);
+    expect(updated!.props.vci).toBe("TSO");
+    expect(updated!.props.cardNumber).toBe("6666");
+    expect(updated!.props.accountingDate).toBe("0320");
+    expect(updated!.props.transactionDate).toBeInstanceOf(Date);
+  });
+
+  it("handles missing card_detail gracefully (cardNumber remains undefined)", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_4");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockResolvedValueOnce({
+      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "0101",
+      transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
+      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      // No card_detail
+    });
+
+    const result = await confirmTransactionAction("tok_audit_4");
+
+    expect(result.cardNumber).toBeUndefined();
+    expect(result.vci).toBe("TSO");
+  });
+
+  it("normalizes empty card_number to undefined (not empty string)", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_5");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockResolvedValueOnce({
+      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "0101",
+      transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
+      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      card_detail: { card_number: "" },
+    });
+
+    const result = await confirmTransactionAction("tok_audit_5");
+
+    expect(result.cardNumber).toBeUndefined();
+  });
+
+  it("normalizes null vci to undefined", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_6");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockResolvedValueOnce({
+      vci: null, amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "0101",
+      transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
+      payment_type_code: "VD", response_code: 0, installments_number: 1,
+    });
+
+    const result = await confirmTransactionAction("tok_audit_6");
+
+    expect(result.vci).toBeUndefined();
+  });
+
+  it("marks FAILED when transactionDate is invalid (domain rejects it)", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_audit_7");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockResolvedValueOnce({
+      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
+      session_id: "session-1", accounting_date: "0101",
+      transaction_date: "not-a-real-date", authorization_code: "AUTH001",
+      payment_type_code: "VD", response_code: 0, installments_number: 1,
+    });
+
+    // Domain throws Invalid Date → caught by outer catch → marks FAILED
+    const result = await confirmTransactionAction("tok_audit_7");
+
+    expect(result.status).toBe("FAILED");
+  });
+});
+
+// ─── Audit Log Assertions ──────────────────────────────────────────────────
+
+describe("Audit logging", () => {
+  const auditLogMock = vi.mocked(prisma.transactionAuditLog.create);
+
+  beforeEach(() => {
+    auditLogMock.mockClear();
+  });
+
+  it("logs INITIALIZED on initiateTransactionAction", async () => {
+    mockGateway._createTransactionMock.mockResolvedValueOnce({
+      token: "tbk_init_audit_1",
+      url: "https://webpay3g.transbank.cl/webpayserver/init_transaction",
+    });
+
+    await expect(initiateTransactionAction(5000)).rejects.toThrow("NEXT_REDIRECT");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "INITIALIZED",
+          buyOrder: expect.stringContaining("BO"),
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("logs MARKED_FAILED when Transbank rejects on initiate", async () => {
+    mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
+
+    await expect(initiateTransactionAction(5000)).rejects.toThrow("Fallo al inicializar Gateway");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "MARKED_FAILED",
+        }),
+      }),
+    );
+  });
+
+  it("logs AUTHORIZED on confirmTransactionAction", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_confirm_audit_1");
+    seed(tx);
+
+    mockCommitAuthorized();
+
+    await confirmTransactionAction("tok_confirm_audit_1");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "AUTHORIZED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("logs REJECTED on confirmTransactionAction when bank rejects", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_confirm_audit_2");
+    seed(tx);
+
+    mockCommitRejected(-1);
+
+    await confirmTransactionAction("tok_confirm_audit_2");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "REJECTED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("logs ABORTED on abortTransactionAction", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    seed(tx);
+
+    await abortTransactionAction("tbk_token_123", "BO123");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "ABORTED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("logs MARKED_FAILED when confirmTransactionAction fallback fails", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    tx.setToken("tok_confirm_audit_3");
+    seed(tx);
+
+    mockGateway._commitTransactionMock.mockRejectedValueOnce(
+      new TransbankAlreadyProcessedError("tok_confirm_audit_3"),
+    );
+    mockGateway._getTransactionStatusMock.mockRejectedValueOnce(new Error("Network error"));
+
+    await confirmTransactionAction("tok_confirm_audit_3");
+
+    expect(auditLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          event: "MARKED_FAILED",
+          buyOrder: "BO123",
+          transactionId: expect.any(String),
+        }),
+      }),
+    );
   });
 });
