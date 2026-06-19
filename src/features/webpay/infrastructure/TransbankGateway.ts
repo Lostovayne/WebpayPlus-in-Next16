@@ -94,6 +94,7 @@ export class TransbankGateway {
         amount,
         return_url: returnUrl,
       }),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!response.ok) {
@@ -117,6 +118,7 @@ export class TransbankGateway {
     const response = await fetch(`${this.baseUrl}${this.apiPath}/${token}`, {
       method: "PUT",
       headers: this.headers,
+      signal: AbortSignal.timeout(10000),
     });
 
     // 422 = ya fue procesado anteriormente (doble clic, reload, reintento del worker)
@@ -150,6 +152,7 @@ export class TransbankGateway {
     const response = await fetch(`${this.baseUrl}${this.apiPath}/${token}`, {
       method: "GET",
       headers: this.headers,
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!response.ok) {
@@ -180,6 +183,7 @@ export class TransbankGateway {
       method: "POST",
       headers: this.headers,
       body: JSON.stringify({ amount }),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!response.ok) {

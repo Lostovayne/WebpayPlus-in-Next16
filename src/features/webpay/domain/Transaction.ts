@@ -35,6 +35,7 @@ export interface WebpayTransactionProps {
   transactionDate?: Date;  // Fecha/hora real de la transacción
   abortedReason?: string;
   polledAt?: Date;
+  paymentUrl?: string; // URL del formulario de Transbank — necesaria para redirect de idempotencia
   createdAt: Date;
 }
 
@@ -91,6 +92,12 @@ export class WebpayTransaction {
   public setToken(token: string): void {
     this.assertStatus("INITIALIZED", "setToken");
     this.props.token = token;
+  }
+
+  public setPaymentUrl(url: string): void {
+    this.assertStatus("INITIALIZED", "setPaymentUrl");
+    if (!url) throw new Error("[Domain] paymentUrl no puede estar vacío.");
+    this.props.paymentUrl = url;
   }
 
   public markAsAuthorized(data: WebpayCommitData): void {

@@ -7,6 +7,29 @@ const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
 
 const FROM_EMAIL = env.RESEND_FROM_EMAIL ?? "noreply@localhost";
 
+// ─── Retry Helper ──────────────────────────────────────────────────────────
+
+/**
+ * Retry wrapper with exponential backoff for email sending.
+ * Transient Resend failures (rate limits, network hiccups) are common.
+ */
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts) {
+        const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+        logger.warn({ attempt, delayMs }, "[Auth] Email send failed, retrying...");
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  throw lastError;
+}
+
 // ─── Email Templates ────────────────────────────────────────────────────────
 
 function verificationEmailTemplate(url: string): string {
@@ -84,12 +107,14 @@ export async function sendVerificationEmail(
     logger.debug({ email }, "[Auth] Verification email (dev mode, not sent)");
     return;
   }
-  await resend.emails.send({
-    from: FROM_EMAIL,
-    to: email,
-    subject: "Verify your email address",
-    html: verificationEmailTemplate(url),
-  });
+  await withRetry(() =>
+    resend.emails.send({
+      from: FROM_EMAIL,
+      to: email,
+      subject: "Verify your email address",
+      html: verificationEmailTemplate(url),
+    }),
+  );
 }
 
 export async function sendOTPEmail(
@@ -100,12 +125,14 @@ export async function sendOTPEmail(
     logger.debug({ email }, "[Auth] OTP email (dev mode, not sent)");
     return;
   }
-  await resend.emails.send({
-    from: FROM_EMAIL,
-    to: email,
-    subject: "Your verification code",
-    html: otpEmailTemplate(otp),
-  });
+  await withRetry(() =>
+    resend.emails.send({
+      from: FROM_EMAIL,
+      to: email,
+      subject: "Your verification code",
+      html: otpEmailTemplate(otp),
+    }),
+  );
 }
 
 export async function sendPasswordResetEmail(
@@ -116,10 +143,12 @@ export async function sendPasswordResetEmail(
     logger.debug({ email }, "[Auth] Password reset email (dev mode, not sent)");
     return;
   }
-  await resend.emails.send({
-    from: FROM_EMAIL,
-    to: email,
-    subject: "Reset your password",
-    html: passwordResetTemplate(url),
-  });
+  await withRetry(() =>
+    resend.emails.send({
+      from: FROM_EMAIL,
+      to: email,
+      subject: "Reset your password",
+      html: passwordResetTemplate(url),
+    }),
+  );
 }

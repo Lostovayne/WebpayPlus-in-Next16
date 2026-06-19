@@ -101,6 +101,7 @@ model WebpayTransaction {
   sessionId String  @map("session_id") @db.VarChar(61)
   amount    Decimal @db.Decimal(17, 2)
   token     String? @unique @db.VarChar(64)
+  paymentUrl String? @map("payment_url") @db.VarChar(512)
   status    TransactionStatus @default(INITIALIZED)
 
   // Return data via callback

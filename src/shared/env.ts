@@ -20,6 +20,8 @@ const envSchema = z.object({
   // Resend (email service for auth emails) — optional in dev, required in production
   RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is missing").optional(),
   RESEND_FROM_EMAIL: z.string().email("RESEND_FROM_EMAIL must be a valid email").optional(),
+  // Logging
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional(),
 });
 
 const parsedEnv = envSchema.safeParse({
@@ -35,6 +37,7 @@ const parsedEnv = envSchema.safeParse({
   UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
   RESEND_API_KEY: process.env.RESEND_API_KEY,
   RESEND_FROM_EMAIL: process.env.RESEND_FROM_EMAIL,
+  LOG_LEVEL: process.env.LOG_LEVEL,
 });
 
 if (!parsedEnv.success) {
@@ -54,4 +57,8 @@ if (!data.BETTER_AUTH_URL) {
 }
 
 // After post-parse validation, BETTER_AUTH_URL is guaranteed to be defined
-export const env: Omit<typeof data, "BETTER_AUTH_URL"> & { BETTER_AUTH_URL: string } = data as any;
+type EnvData = typeof data;
+export const env: Omit<EnvData, "BETTER_AUTH_URL"> & { BETTER_AUTH_URL: string } = {
+  ...data,
+  BETTER_AUTH_URL: data.BETTER_AUTH_URL!,
+};

@@ -24,6 +24,7 @@ export class PrismaTransactionRepository {
         amount: d.amount,
         status: d.status,
         token: d.token,
+        paymentUrl: d.paymentUrl,
         vci: d.vci,
         cardNumber: d.cardNumber,
         accountingDate: d.accountingDate,
@@ -39,6 +40,7 @@ export class PrismaTransactionRepository {
       update: {
         status: d.status,
         token: d.token,
+        paymentUrl: d.paymentUrl,
         vci: d.vci,
         cardNumber: d.cardNumber,
         accountingDate: d.accountingDate,
@@ -110,6 +112,7 @@ export class PrismaTransactionRepository {
     amount: { toNumber(): number };
     status: string;
     token: string | null;
+    paymentUrl: string | null;
     vci: string | null;
     cardNumber: string | null;
     accountingDate: string | null;
@@ -133,16 +136,17 @@ export class PrismaTransactionRepository {
       id: record.id,
       buyOrder: record.buyOrder,
       sessionId: record.sessionId,
-      amount: record.amount.toNumber(),
+      amount: Number(record.amount.toString()),
       status: record.status as TransactionStatus,
       token: record.token ?? undefined,
+      paymentUrl: record.paymentUrl ?? undefined,
       vci: record.vci ?? undefined,
       cardNumber: record.cardNumber ?? undefined,
       accountingDate: record.accountingDate ?? undefined,
       transactionDate: record.transactionDate ?? undefined,
       authCode: record.authCode ?? undefined,
       paymentTypeCode: record.paymentTypeCode ?? undefined,
-      installmentsAmount: record.installmentsAmount?.toNumber(),
+      installmentsAmount: record.installmentsAmount ? Number(record.installmentsAmount.toString()) : undefined,
       installmentsNumber: record.installmentsNumber ?? undefined,
       responseCode: record.responseCode ?? undefined,
       abortedReason: record.abortedReason ?? undefined,

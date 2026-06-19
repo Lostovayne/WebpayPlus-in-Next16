@@ -360,7 +360,7 @@ describe("initiateTransactionAction", () => {
     it("marks transaction as FAILED and throws when Transbank rejects", async () => {
       mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
 
-      await expect(initiateTransactionAction(5000)).rejects.toThrow("Fallo al inicializar Gateway");
+      await expect(initiateTransactionAction(5000)).rejects.toThrow("Error al iniciar el pago. Intenta de nuevo más tarde.");
 
       const allTx = Array.from(mockRepoStore.values());
       expect(allTx).toHaveLength(1);
@@ -371,7 +371,7 @@ describe("initiateTransactionAction", () => {
       // First call: Transbank fails
       mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
 
-      await expect(initiateTransactionAction(5000)).rejects.toThrow("Fallo al inicializar Gateway");
+      await expect(initiateTransactionAction(5000)).rejects.toThrow("Error al iniciar el pago. Intenta de nuevo más tarde.");
 
       // Transaction should exist in DB even though Transbank failed
       const allTx = Array.from(mockRepoStore.values());
@@ -728,7 +728,7 @@ describe("Audit logging", () => {
   it("logs MARKED_FAILED when Transbank rejects on initiate", async () => {
     mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
 
-    await expect(initiateTransactionAction(5000)).rejects.toThrow("Fallo al inicializar Gateway");
+    await expect(initiateTransactionAction(5000)).rejects.toThrow("Error al iniciar el pago. Intenta de nuevo más tarde.");
 
     expect(auditLogMock).toHaveBeenCalledWith(
       expect.objectContaining({

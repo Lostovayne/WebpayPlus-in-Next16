@@ -44,7 +44,7 @@ async function logAuditEvent(
   transactionId: string,
   buyOrder: string,
   event: AuditEvent,
-  details?: Record<string, unknown>,
+  details?: Prisma.InputJsonValue,
 ): Promise<void> {
   try {
     await prisma.transactionAuditLog.create({
@@ -52,12 +52,12 @@ async function logAuditEvent(
         transactionId,
         buyOrder,
         event,
-        ...(details ? { details: details as Prisma.InputJsonValue } : {}),
+        ...(details ? { details } : {}),
       },
     });
   } catch (err) {
     // Audit log failure must NOT break the transaction flow
-    logger.warn({ err, transactionId, buyOrder, event }, "[Webpay] Failed to write audit log");
+    logger.error({ err, transactionId, buyOrder, event, tag: "audit_log_failed" }, "[Webpay] Failed to write audit log");
   }
 }
 
@@ -95,14 +95,75 @@ function generateBuyOrder(): string {
  * Si Transbank falla en el paso 3, la transacción queda en BD como FAILED
  * y tenemos trazabilidad. Sin el paso 2 perderíamos el registro completamente.
  */
-export async function initiateTransactionAction(amount: number): Promise<never> {
+export async function initiateTransactionAction(amount: number, idempotencyKey?: string): Promise<never> {
   if (amount <= 0) throw new Error("Monto inválido: debe ser mayor a cero.");
 
-  const transaction = WebpayTransaction.initialize(generateBuyOrder(), crypto.randomUUID(), amount);
+  // Idempotency: when a key is provided, use it directly as the buyOrder
+  // so subsequent calls with the same key find the existing transaction.
+  let buyOrder: string;
 
-  // Persistir ANTES de tocar red externa
-  await transactionRepository.save(transaction);
-  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "INITIALIZED", { amount });
+  if (idempotencyKey) {
+    if (idempotencyKey.length > 26 || !/^[A-Za-z0-9_-]+$/.test(idempotencyKey)) {
+      throw new Error("idempotencyKey inválido: máximo 26 caracteres alfanuméricos.");
+    }
+    buyOrder = idempotencyKey;
+
+    const existing = await transactionRepository.findByBuyOrder(idempotencyKey);
+    if (existing) {
+      if (existing.props.status === "INITIALIZED" && existing.props.token && existing.props.paymentUrl) {
+        // Re-use existing transaction — redirect to Transbank with stored URL
+        await logAuditEvent(existing.props.id, buyOrder, "INITIALIZED", { idempotent: true } as Prisma.InputJsonValue);
+        redirect(`${existing.props.paymentUrl}?token_ws=${existing.props.token}`);
+      }
+      if (existing.props.status === "INITIALIZED" && existing.props.token && !existing.props.paymentUrl) {
+        // Token exists but paymentUrl missing (Transbank returned empty URL) — not redirectable
+        throw new Error("Transacción en progreso, intenta de nuevo en unos segundos.");
+      }
+      if (existing.props.status === "INITIALIZED" && !existing.props.token) {
+        throw new Error("Transacción en progreso, intenta de nuevo en unos segundos.");
+      }
+      // Terminal states — except FAILED, which is retryable
+      // (FAILED = technical error on our side, Transbank was never called successfully)
+      if (existing.isTerminal && existing.props.status !== "FAILED") {
+        throw new Error("Transacción ya procesada.");
+      }
+      // FAILED status: fall through to create a new transaction (retry)
+    }
+  } else {
+    buyOrder = generateBuyOrder();
+  }
+
+  const transaction = WebpayTransaction.initialize(buyOrder, crypto.randomUUID(), amount);
+
+  // Persistir ANTES de tocar red externa.
+  // Catch P2002 (unique constraint) for race condition: two parallel calls
+  // with same idempotencyKey may both reach here. The second save will fail
+  // with P2002 — re-read and apply idempotency logic.
+  try {
+    await transactionRepository.save(transaction);
+  } catch (err) {
+    // Prisma v7: error code is in err.code, NOT in err.message
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      // Race condition: another request created the transaction first.
+      // Re-read and apply idempotency logic.
+      const raceExisting = await transactionRepository.findByBuyOrder(buyOrder);
+      if (raceExisting) {
+        if (raceExisting.props.status === "INITIALIZED" && raceExisting.props.token && raceExisting.props.paymentUrl) {
+          await logAuditEvent(raceExisting.props.id, buyOrder, "INITIALIZED", { idempotent: true } as Prisma.InputJsonValue);
+          redirect(`${raceExisting.props.paymentUrl}?token_ws=${raceExisting.props.token}`);
+        }
+        // Terminal states (except FAILED) — cannot retry
+        if (raceExisting.isTerminal && raceExisting.props.status !== "FAILED") {
+          throw new Error("Transacción ya procesada.");
+        }
+        // INITIALIZED without token, or FAILED — retryable
+      }
+      throw new Error("Transacción en progreso, intenta de nuevo en unos segundos.");
+    }
+    throw err;
+  }
+
+  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "INITIALIZED", { amount } as Prisma.InputJsonValue);
 
   const returnUrl = `${env.NEXT_PUBLIC_APP_URL}/api/webpay/return`;
   let redirectTarget: string;
@@ -116,14 +177,15 @@ export async function initiateTransactionAction(amount: number): Promise<never> 
     );
 
     transaction.setToken(tbkResponse.token);
+    transaction.setPaymentUrl(tbkResponse.url);
     await transactionRepository.save(transaction);
 
     redirectTarget = `${tbkResponse.url}?token_ws=${tbkResponse.token}`;
   } catch (err) {
     transaction.markAsFailed();
     await transactionRepository.save(transaction);
-    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: String(err) });
-    throw new Error(`Fallo al inicializar Gateway de pago: ${String(err)}`);
+    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: String(err) } as Prisma.InputJsonValue);
+    throw new Error("Error al iniciar el pago. Intenta de nuevo más tarde.");
   }
 
   // redirect() debe ir fuera del try/catch — Next.js lo implementa con una excepción interna
@@ -163,7 +225,7 @@ export async function confirmTransactionAction(token: string) {
         responseCode: response.response_code,
         // Audit trail — datos de Transbank para reconciliation
         vci: response.vci ?? undefined,
-        cardNumber: response.card_detail?.card_number?.slice(-4) || undefined,
+        cardNumber: response.card_detail?.card_number && response.card_detail.card_number.length >= 4 ? response.card_detail.card_number.slice(-4) : undefined,
         accountingDate: response.accounting_date ?? undefined,
         transactionDate: response.transaction_date,
       });
@@ -187,7 +249,7 @@ export async function confirmTransactionAction(token: string) {
             responseCode: status.response_code,
             // Audit trail — datos de Transbank para reconciliation
             vci: status.vci ?? undefined,
-            cardNumber: status.card_detail?.card_number?.slice(-4) || undefined,
+            cardNumber: status.card_detail?.card_number && status.card_detail.card_number.length >= 4 ? status.card_detail.card_number.slice(-4) : undefined,
             accountingDate: status.accounting_date ?? undefined,
             transactionDate: status.transaction_date,
           });
@@ -213,11 +275,11 @@ export async function confirmTransactionAction(token: string) {
     await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "AUTHORIZED", {
       authorizationCode: transaction.props.authCode,
       responseCode: transaction.props.responseCode,
-    });
+    } as Prisma.InputJsonValue);
   } else if (newStatus === "REJECTED") {
     await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "REJECTED", {
       responseCode: transaction.props.responseCode,
-    });
+    } as Prisma.InputJsonValue);
   } else if (newStatus === "FAILED") {
     await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED");
   }
@@ -234,10 +296,14 @@ export async function confirmTransactionAction(token: string) {
  * Usamos el buyOrder para encontrar la transacción en nuestra BD
  * (el TBK_TOKEN no es el token de pago, es un identificador del abandono).
  */
-export async function abortTransactionAction(tbkToken: string, buyOrder: string): Promise<void> {
+export async function abortTransactionAction(tbkToken: string, buyOrder?: string): Promise<void> {
   // Transbank envía el buyOrder tanto en cancelaciones como en timeouts.
   // Buscamos y marcamos ABORTED de inmediato para no depender del Worker.
   // Si no encontramos la transacción, logueamos para trazabilidad — no es un error fatal.
+  if (!buyOrder) {
+    logger.warn({ tbkToken }, "[Webpay] abortTransactionAction: buyOrder not provided by Transbank");
+    return;
+  }
   const transaction = await transactionRepository.findByBuyOrder(buyOrder);
 
   if (!transaction) {
@@ -250,7 +316,7 @@ export async function abortTransactionAction(tbkToken: string, buyOrder: string)
 
   transaction.markAsAbortedByClient(`TBK_TOKEN:${tbkToken.slice(0, 20)}`);
   await transactionRepository.save(transaction);
-  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "ABORTED", { tbkToken: tbkToken.slice(0, 20) });
+  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "ABORTED", { tbkToken: tbkToken.slice(0, 20) } as Prisma.InputJsonValue);
 }
 
 // ─── Use Case 4: Polling del Worker ─────────────────────────────────────────
@@ -282,7 +348,7 @@ export async function pollStaleTransactionsAction(): Promise<{
       // Sin token nunca se redirigió al banco → fallo técnico en la creación
       transaction.markAsFailed();
       await transactionRepository.save(transaction);
-      await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "no_token" });
+      await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "no_token" } as Prisma.InputJsonValue);
       failed++;
       continue;
     }
@@ -308,20 +374,20 @@ export async function pollStaleTransactionsAction(): Promise<{
           responseCode: status.response_code,
           // Audit trail — datos de Transbank para reconciliation
           vci: status.vci ?? undefined,
-          cardNumber: status.card_detail?.card_number?.slice(-4) || undefined,
+          cardNumber: status.card_detail?.card_number && status.card_detail.card_number.length >= 4 ? status.card_detail.card_number.slice(-4) : undefined,
           accountingDate: status.accounting_date ?? undefined,
           transactionDate: status.transaction_date,
         });
         await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "AUTHORIZED", {
           authorizationCode: status.authorization_code,
           responseCode: status.response_code,
-        });
+        } as Prisma.InputJsonValue);
         authorized++;
       } else if (status.response_code !== undefined) {
         transaction.markAsRejected(status.response_code);
         await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "REJECTED", {
           responseCode: status.response_code,
-        });
+        } as Prisma.InputJsonValue);
         rejected++;
       } else {
         // Estado ambiguo — dejar para el próximo ciclo
@@ -334,10 +400,11 @@ export async function pollStaleTransactionsAction(): Promise<{
     } catch {
       // Transbank no pudo responder — ¿lleva más de 7 días? → ya jamás se resolverá
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      if (transaction.props.createdAt < sevenDaysAgo) {
+      const referenceDate = transaction.props.transactionDate ?? transaction.props.createdAt;
+      if (referenceDate < sevenDaysAgo) {
         transaction.markAsFailed();
         await transactionRepository.save(transaction);
-        await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "stale_7d" });
+        await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "stale_7d" } as Prisma.InputJsonValue);
         failed++;
       }
       // Si no, dejamos para el próximo ciclo del cron — polledAt NO se modifica

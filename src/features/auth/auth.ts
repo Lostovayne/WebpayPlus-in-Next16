@@ -132,7 +132,8 @@ export const auth = betterAuth({
       handler: (promise) => {
         // Fire-and-forget: email sending shouldn't delay the response
         promise.catch((err) => {
-          logger.error({ err }, "[Auth] Background task error");
+          const error = err instanceof Error ? err : new Error(String(err));
+          logger.error({ err: error, tag: "background_task_error" }, "[Auth] Background task failed");
         });
       },
     },
