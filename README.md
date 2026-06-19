@@ -167,7 +167,7 @@ src/
 
 ## Los 3 Escenarios de Return URL
 
-Aquí es donde falla el 90% de las integraciones. Transbank puede llamar a la `return_url` de **tres formas diferentes**, y debés manejar todas:
+Aquí es donde falla el 90% de las integraciones. Transbank puede llamar a la `return_url` de **tres formas diferentes**, y debe manejar todas:
 
 | Escenario | Método HTTP | Parámetros |
 |---|---|---|
@@ -176,7 +176,7 @@ Aquí es donde falla el 90% de las integraciones. Transbank puede llamar a la `r
 | Timeout (5 min sin acción del usuario) | `GET` | `TBK_TOKEN=<t>` + `TBK_ORDEN_COMPRA=<bo>` + `TBK_ID_SESION=<s>` |
 
 > [!IMPORTANT]
-> Cuando el usuario *cancela* o hay *timeout*, **`token_ws` NO está presente**. Si solo manejás `token_ws`, estás ignorando dos de los tres escenarios.
+> Cuando el usuario *cancela* o hay *timeout*, **`token_ws` NO está presente**. Si solo maneja `token_ws`, está ignorando dos de los tres escenarios.
 
 ---
 
@@ -199,7 +199,7 @@ Aquí es donde falla el 90% de las integraciones. Transbank puede llamar a la `r
 ```
 
 > [!CAUTION]
-> Una transacción `AUTHORIZED` **NUNCA puede revertirse a `FAILED`**. Si Transbank ya cobró y tu sistema falla después, debés llamar a `requestRefund()`. Un rollback de estado es un desastre contable y una violación de las políticas de Transbank.
+> Una transacción `AUTHORIZED` **NUNCA puede revertirse a `FAILED`**. Si Transbank ya cobró y tu sistema falla después, debe llamar a `requestRefund()`. Un rollback de estado es un desastre contable y una violación de las políticas de Transbank.
 
 ---
 
@@ -295,7 +295,7 @@ bun install
 cp .env.example .env
 ```
 
-Editá `.env` con tus valores. Ver `.env.example` para documentación completa de cada variable.
+Edit `.env` con sus valores. Ver `.env.example` para documentación completa de cada variable.
 
 ### 3. Configurar la base de datos
 
@@ -309,7 +309,7 @@ bunx prisma migrate dev
 bun dev
 ```
 
-Abrí [http://localhost:3000/checkout](http://localhost:3000/checkout).
+Abra [http://localhost:3000/checkout](http://localhost:3000/checkout).
 
 ---
 
@@ -381,7 +381,7 @@ CVV: cualquier número de 3 dígitos. Vencimiento: cualquier fecha futura. RUT: 
 > *Opcional en desarrollo (loguea en vez de enviar). Requerido en producción.
 
 > [!WARNING]
-> Antes de ir a producción, **cambiá** `WEBPAY_COMMERCE_CODE`, `WEBPAY_API_SECRET`, y seteá `WEBPAY_ENVIRONMENT=production`. Las credenciales de integración no funcionan en producción.
+> Antes de ir a producción, **cambie** `WEBPAY_COMMERCE_CODE`, `WEBPAY_API_SECRET`, y configure `WEBPAY_ENVIRONMENT=production`. Las credenciales de integración no funcionan en producción.
 
 ---
 
@@ -459,19 +459,19 @@ curl -X GET http://localhost:3000/api/webpay/poll \
 
 ## Deploy a Vercel
 
-### 1. Setear variables de entorno
+### 1. Configurar variables de entorno
 
-En el dashboard del proyecto → **Settings → Environment Variables**, agregá todas las variables de `.env.example` con valores de producción.
+En el dashboard del proyecto → **Settings → Environment Variables**, agregue todas las variables de `.env.example` con valores de producción.
 
 ### 2. Verificar Cron Jobs
 
-El archivo `vercel.json` configura el cron automáticamente. Verificá que tu plan de Vercel soporte Cron Jobs (Pro o superior).
+El archivo `vercel.json` configura el cron automáticamente. Verifique que tu plan de Vercel soporte Cron Jobs (Pro o superior).
 
 ### 3. Deploy
 
 ```bash
 vercel --prod
-# O simplemente pusheá a main con CI/CD configurado
+# O simplemente pushee a main con CI/CD configurado
 git push origin master
 ```
 
@@ -512,7 +512,7 @@ const { token, url } = await gateway.createTransaction(buyOrder, sessionId, amou
 fetch("https://webpay3g.transbank.cl/...", { headers: { "Tbk-Api-Key-Id": ... } });
 ```
 
-Si Transbank cambia su API, URL, o headers mañana, **solo tocás `TransbankGateway.ts`** — el resto del sistema no se entera.
+Si Transbank cambia su API, URL, o headers mañana, **solo toque `TransbankGateway.ts`** — el resto del sistema no se entera.
 
 ---
 
@@ -522,7 +522,7 @@ El 422 de Transbank merece atención especial. Su documentación dice:
 
 > *Si el comercio reintenta el commit de una transacción ya confirmada, recibirá HTTP 422.*
 
-Esto pasa más seguido de lo que pensás: doble clic del usuario, reload de página, reintento del worker, caída de red después del commit. El enfoque correcto **no es** marcar `FAILED` — es consultar el estado real:
+Esto pasa más seguido de lo que piensa: doble clic del usuario, reload de página, reintento del worker, caída de red después del commit. El enfoque correcto **no es** marcar `FAILED` — es consultar el estado real:
 
 ```typescript
 try {
@@ -579,13 +579,13 @@ try {
 
 ## Contributing
 
-1. Forkeá el repositorio
-2. Creá una branch: `git checkout -b feat/mi-mejora`
-3. Commiteá los cambios: `git commit -m "feat: descripción"`
-4. Pusheá: `git push origin feat/mi-mejora`
-5. Abrí un Pull Request
+1. Forkee el repositorio
+2. Cree una branch: `git checkout -b feat/mi-mejora`
+3. Commitee los cambios: `git commit -m "feat: descripción"`
+4. Publique: `git push origin feat/mi-mejora`
+5. Abra un Pull Request
 
-Antes de enviar, verificá que los tests pasen:
+Antes de enviar, verifique que los tests pasen:
 
 ```bash
 bun test
@@ -595,7 +595,7 @@ bun test
 
 ## Licencia
 
-MIT — usalo, modificalo, vendelo si querés. Solo no vengas a quejarte cuando no manejaste el 422.
+MIT — úselo, modifíquelo, véndalo si lo desea. Solo no venga a quejarse cuando no manejó el 422.
 
 ---
 
