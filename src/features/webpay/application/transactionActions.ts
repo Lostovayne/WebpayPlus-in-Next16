@@ -40,11 +40,15 @@ export async function __resetGatewayForTesting(): Promise<void> {
 
 // ─── Audit Log Helper ──────────────────────────────────────────────────────
 
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonRecord | JsonValue[];
+type JsonRecord = { [key: string]: JsonValue };
+
 async function logAuditEvent(
   transactionId: string,
   buyOrder: string,
   event: AuditEvent,
-  details?: Prisma.InputJsonValue,
+  details?: JsonRecord,
 ): Promise<void> {
   try {
     await prisma.transactionAuditLog.create({
@@ -69,7 +73,7 @@ async function logAuditEvent(
  */
 async function reverseTransaction(
   transaction: WebpayTransaction,
-  auditDetails: Prisma.InputJsonValue,
+  auditDetails: JsonRecord,
 ): Promise<void> {
   transaction.markAsReversed();
   await transactionRepository.save(transaction);
@@ -132,7 +136,7 @@ export async function initiateTransactionAction(amount: number, idempotencyKey?:
     if (existing) {
       if (existing.props.status === "INITIALIZED" && existing.props.token && existing.props.paymentUrl) {
         // Re-use existing transaction — return redirect data for POST form
-        await logAuditEvent(existing.props.id, buyOrder, "INITIALIZED", { idempotent: true } as Prisma.InputJsonValue);
+        await logAuditEvent(existing.props.id, buyOrder, "INITIALIZED", { idempotent: true });
         return { url: existing.props.paymentUrl, token: existing.props.token };
       }
       if (existing.props.status === "INITIALIZED" && existing.props.token && !existing.props.paymentUrl) {
@@ -169,7 +173,7 @@ export async function initiateTransactionAction(amount: number, idempotencyKey?:
       const raceExisting = await transactionRepository.findByBuyOrder(buyOrder);
       if (raceExisting) {
         if (raceExisting.props.status === "INITIALIZED" && raceExisting.props.token && raceExisting.props.paymentUrl) {
-          await logAuditEvent(raceExisting.props.id, buyOrder, "INITIALIZED", { idempotent: true } as Prisma.InputJsonValue);
+          await logAuditEvent(raceExisting.props.id, buyOrder, "INITIALIZED", { idempotent: true });
           return { url: raceExisting.props.paymentUrl, token: raceExisting.props.token };
         }
         // Terminal states (except FAILED) — cannot retry
@@ -183,7 +187,7 @@ export async function initiateTransactionAction(amount: number, idempotencyKey?:
     throw err;
   }
 
-  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "INITIALIZED", { amount } as Prisma.InputJsonValue);
+  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "INITIALIZED", { amount });
 
   const returnUrl = `${env.NEXT_PUBLIC_APP_URL}/api/webpay/return`;
 
@@ -207,7 +211,7 @@ export async function initiateTransactionAction(amount: number, idempotencyKey?:
   } catch (err) {
     transaction.markAsFailed();
     await transactionRepository.save(transaction);
-    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: String(err) } as Prisma.InputJsonValue);
+    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: String(err) });
     throw new Error("Error initiating payment. Try again later.");
   }
 
@@ -252,7 +256,7 @@ export async function confirmTransactionAction(token: string) {
     await transactionRepository.save(transaction);
     await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", {
       reason: "token_expired",
-    } as Prisma.InputJsonValue);
+    });
     return transaction.props;
   }
 
@@ -318,11 +322,11 @@ export async function confirmTransactionAction(token: string) {
     await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "AUTHORIZED", {
       authorizationCode: transaction.props.authCode,
       responseCode: transaction.props.responseCode,
-    } as Prisma.InputJsonValue);
+    });
   } else if (newStatus === "REJECTED") {
     await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "REJECTED", {
       responseCode: transaction.props.responseCode,
-    } as Prisma.InputJsonValue);
+    });
   } else if (newStatus === "FAILED") {
     await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED");
   }
@@ -359,7 +363,7 @@ export async function abortTransactionAction(tbkToken: string, buyOrder?: string
 
   transaction.markAsAbortedByClient(`TBK_TOKEN:${tbkToken.slice(0, 20)}`);
   await transactionRepository.save(transaction);
-  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "ABORTED", { tbkToken: tbkToken.slice(0, 20) } as Prisma.InputJsonValue);
+  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "ABORTED", { tbkToken: tbkToken.slice(0, 20) });
 }
 
 // ─── Use Case 4: Worker Polling ─────────────────────────────────────────
@@ -393,7 +397,7 @@ export async function pollStaleTransactionsAction(): Promise<{
       // No token means never redirected to bank → technical error during creation
       transaction.markAsFailed();
       await transactionRepository.save(transaction);
-      await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "no_token" } as Prisma.InputJsonValue);
+      await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "no_token" });
       failed++;
       continue;
     }
@@ -426,13 +430,13 @@ export async function pollStaleTransactionsAction(): Promise<{
         await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "AUTHORIZED", {
           authorizationCode: status.authorization_code,
           responseCode: status.response_code,
-        } as Prisma.InputJsonValue);
+        });
         authorized++;
       } else if (status.response_code !== undefined) {
         transaction.markAsRejected(status.response_code);
         await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "REJECTED", {
           responseCode: status.response_code,
-        } as Prisma.InputJsonValue);
+        });
         rejected++;
       } else {
         // Ambiguous state — leave for next cycle
@@ -458,7 +462,7 @@ export async function pollStaleTransactionsAction(): Promise<{
       if (referenceDate < sevenDaysAgo) {
         transaction.markAsFailed();
         await transactionRepository.save(transaction);
-        await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "stale_7d" } as Prisma.InputJsonValue);
+        await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "stale_7d" });
         failed++;
       }
       // Otherwise, leave for next cron cycle — polledAt is NOT modified
