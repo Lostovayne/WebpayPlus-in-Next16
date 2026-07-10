@@ -563,6 +563,50 @@ describe("pollStaleTransactionsAction", () => {
       expect(updated!.props.polledAt).toBeUndefined();
     });
   });
+
+  describe("Race condition with return handler", () => {
+    it("does NOT overwrite if return handler processes between guard #1 and save", async () => {
+      // Scenario: poll worker reads stale INITIALIZED transaction, calls Transbank,
+      // but while waiting, the return handler processes the same transaction (marking AUTHORIZED).
+      // The poll worker should NOT overwrite the return handler's state.
+      const tx = WebpayTransaction.initialize("BO-RACE-1", "session-1", 5000);
+      tx.setToken("tok_race_1");
+      tx.props.createdAt = new Date(Date.now() - 15 * 60 * 1000);
+      seed(tx);
+
+      // Transbank says AUTHORIZED (poll worker's perspective)
+      mockGateway._getTransactionStatusMock.mockImplementationOnce(async () => {
+        // Simulate return handler processing this transaction WHILE we wait
+        // This mutates the store so guard #2 sees a terminal state
+        const stored = mockRepoStore.get(tx.props.id);
+        if (stored) {
+          stored.markAsAuthorized({
+            authorizationCode: "AUTH-RACE",
+            paymentTypeCode: "VD",
+            installmentsNumber: 1,
+            responseCode: 0,
+            transactionDate: "2026-01-01T00:00:00.000Z",
+          });
+        }
+        return {
+          vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO-RACE-1",
+          session_id: "session-1", accounting_date: "0101",
+          transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
+          payment_type_code: "VD", response_code: 0, installments_number: 1,
+        };
+      });
+
+      const result = await pollStaleTransactionsAction();
+
+      // Should have processed but NOT overwritten return handler's state
+      expect(result.processed).toBe(1);
+      expect(result.authorized).toBe(0); // skipped — return handler already won
+
+      const updated = mockRepoStore.get(tx.props.id);
+      // Return handler's auth code should be preserved, NOT poll worker's
+      expect(updated!.props.authCode).toBe("AUTH-RACE");
+    });
+  });
 });
 
 // ─── Audit Trail Tests ────────────────────────────────────────────────────────

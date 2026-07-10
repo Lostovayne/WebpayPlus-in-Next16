@@ -439,6 +439,15 @@ export async function pollStaleTransactionsAction(): Promise<{
 
       // Marcar como polled DESPUÉS de respuesta exitosa de Transbank
       transaction.markAsPolled();
+
+      // Race condition guard #2: re-read BEFORE save to detect if return handler
+      // processed this transaction while we were waiting for Transbank's response.
+      const freshBeforeSave = await transactionRepository.findByToken(token);
+      if (freshBeforeSave?.isTerminal) {
+        // Return handler already processed — skip save to avoid overwrite
+        continue;
+      }
+
       await transactionRepository.save(transaction);
     } catch {
       // Transbank no pudo responder — ¿lleva más de 7 días? → ya jamás se resolverá
