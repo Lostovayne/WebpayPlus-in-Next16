@@ -1,5 +1,0 @@
-scan:
-  baseline: .foxguard/baseline.json
-
-secrets:
-  baseline: .foxguard/secrets-baseline.json

@@ -363,6 +363,7 @@ export async function abortTransactionAction(tbkToken: string, buyOrder?: string
 }
 
 // ─── Use Case 4: Polling del Worker ─────────────────────────────────────────
+// Resuelve transacciones INITIALIZED que no completaron el flujo de pago.
 
 /**
  * Exclusivo del Worker/Cron. Se ejecuta cada 5 minutos desde el endpoint

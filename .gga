@@ -22,7 +22,7 @@
 #   PROVIDER="github:deepseek-r1"
 #   PROVIDER="minimax"
 #   PROVIDER="minimax:MiniMax-M3"
-PROVIDER="opencode:Big Picke"
+PROVIDER="opencode:mimo-v2.5-free"
 
 # File patterns to include in review (comma-separated)
 # Default: * (all files)
@@ -54,7 +54,7 @@ TIMEOUT="300"
 
 # OpenCode provider: optional reasoning effort / variant
 # Examples: minimal, low, medium, high, max
-# OPENCODE_VARIANT="high"
+OPENCODE_VARIANT="high"
 
 # OpenCode provider: optional agent profile
 # Keep this lightweight. Agent prompts can add significant token overhead.
