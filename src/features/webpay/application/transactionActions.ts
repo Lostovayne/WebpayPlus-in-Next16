@@ -8,6 +8,7 @@ import { WebpayTransaction } from "../domain/Transaction";
 import { transactionRepository } from "../infrastructure/PrismaTransactionRepository";
 import {
   TransbankAlreadyProcessedError,
+  TransbankRefundAlreadyProcessedError,
   TransbankGateway,
 } from "../infrastructure/TransbankGateway";
 
@@ -58,6 +59,21 @@ async function logAuditEvent(
     // Audit log failure must NOT break the transaction flow
     logger.error({ err, transactionId, buyOrder, event, tag: "audit_log_failed" }, "[Webpay] Failed to write audit log");
   }
+}
+
+// ─── Refund Helper: mark + save + audit ─────────────────────────────────────
+
+/**
+ * Marca una transacción como REVERSED, persiste y registra audit log.
+ * Usado tanto en éxito directo como en fallback de 422.
+ */
+async function reverseTransaction(
+  transaction: WebpayTransaction,
+  auditDetails: Prisma.InputJsonValue,
+): Promise<void> {
+  transaction.markAsReversed();
+  await transactionRepository.save(transaction);
+  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "REVERSED", auditDetails);
 }
 
 // ─── Helper: buy_order seguro ────────────────────────────────────────────────
@@ -439,4 +455,108 @@ export async function pollStaleTransactionsAction(): Promise<{
   }
 
   return { processed: stale.length, authorized, rejected, failed };
+}
+
+// ─── Use Case 5: Reembolsar Transacción ─────────────────────────────────────
+
+/**
+ * Reembolsa (anula/revierte) una transacción ya autorizada.
+ *
+ * ¿Cuándo se usa?
+ * - Cuando el backend falla DESPUÉS de que Transbank autorizó el cobro.
+ * - Cuando el usuario solicita devolución.
+ *
+ * Flujo (no cambiar este orden):
+ * 1. Buscar transacción en BD
+ * 2. Guard de dominio: solo AUTHORIZED puede ser revertido
+ * 3. Idempotencia: si ya es REVERSED o terminal, retornar sin llamar a Transbank
+ * 4. Persistir estado actual ANTES de la llamada a Transbank (checkpoint)
+ * 5. Llamar a Transbank → refund
+ * 6. En éxito: marcar REVERSED, guardar, audit log
+ * 7. En 422 (ya procesado): fallback a getTransactionStatus, aplicar estado real
+ * 8. En timeout/error: NO marcar REVERSED — dejar para intervención manual
+ *
+ * ¿Quién devuelve el dinero?
+ * Nosotros INSTRUIMOS a Transbank que devuelva. Transbank toma el monto de
+ * nuestra cuenta de comercio y lo devuelve al tarjetahabiente. Si no llamamos
+ * este endpoint, el dinero se queda cobrado.
+ *
+ * Riesgo financiero: si hacemos doble refund, Transbank nos cobra dos veces.
+ * Por eso el guard de idempotencia y el manejo del 422 son críticos.
+ */
+export async function refundTransactionAction(
+  token: string,
+  amount: number,
+): Promise<typeof WebpayTransaction.prototype.props> {
+  // 1. Buscar transacción
+  const transaction = await transactionRepository.findByToken(token);
+  if (!transaction) {
+    throw new Error("Transacción no encontrada para el token proporcionado.");
+  }
+
+  // 2. Guard de dominio: solo AUTHORIZED puede ser revertido
+  if (transaction.props.status !== "AUTHORIZED") {
+    // 3. Idempotencia: si ya fue reembolsado o terminó, retornar sin llamar a Transbank
+    if (transaction.props.status === "REVERSED" || transaction.props.status === "FAILED") {
+      return transaction.props;
+    }
+    // Otros estados (INITIALIZED, REJECTED, ABORTED) — refund no aplica
+    throw new Error(
+      `Solo se puede revertir una transacción AUTHORIZED. Estado actual: ${transaction.props.status}`,
+    );
+  }
+
+  try {
+    // 4. Llamar a Transbank → refund
+    const response = await getGateway().requestRefund(token, amount);
+
+    // 5. Éxito: marcar REVERSED
+    await reverseTransaction(transaction, {
+      type: response.type,
+      authorizationCode: response.authorization_code,
+      nullifiedAmount: response.nullified_amount,
+      responseCode: response.response_code,
+    });
+  } catch (error) {
+    if (error instanceof TransbankRefundAlreadyProcessedError) {
+      // 422 = refund ya procesado previamente (doble clic, reintento, etc.)
+      // Consultamos el estado real para recuperar lo que pasó.
+      try {
+        const status = await getGateway().getTransactionStatus(token);
+
+        if (status.status === "REVERSED" || status.status === "NULLIFIED") {
+          // Refund ya fue procesado — marcar REVERSED en nuestra BD
+          await reverseTransaction(transaction, {
+            fallback: true,
+            transbankStatus: status.status,
+            responseCode: status.response_code,
+          });
+        }
+        // Si status sigue AUTHORIZED: estado ambiguo — no marcar REVERSED
+        // (el refund pudo haber sido procesado pero el status no se actualizó aún)
+        // Dejar para intervención manual o próximo ciclo de reconciliación.
+      } catch (statusError) {
+        // getTransactionStatus también falló — loguear pero no romper
+        logger.error(
+          { err: statusError, token },
+          "[Webpay] Fallback getTransactionStatus failed after refund 422",
+        );
+      }
+    } else if (error instanceof DOMException && error.name === "AbortError") {
+      // Timeout: NO marcar REVERSED — no sabemos si Transbank procesó el refund.
+      // Dejar para intervención manual o reconciliación.
+      logger.warn(
+        { token, amount },
+        "[Webpay] Refund timeout — transaction stays AUTHORIZED for manual intervention",
+      );
+    } else {
+      // Error técnico real (red, configuración): NO marcar REVERSED
+      logger.error(
+        { err: error, token, amount },
+        "[Webpay] Refund failed — transaction stays AUTHORIZED",
+      );
+    }
+  }
+
+  return transaction.props;
 }

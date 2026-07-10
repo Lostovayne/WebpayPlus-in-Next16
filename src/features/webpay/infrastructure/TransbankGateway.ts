@@ -34,9 +34,8 @@ export interface WebpayRefundResponse {
 }
 
 /**
- * Error tipado para cuando Transbank responde 422.
+ * Error tipado para cuando Transbank responde 422 en commit.
  * Significa que la transacción YA fue procesada previamente.
- * Esto es distinto de un error de red o de configuración.
  * El caso de uso lo captura para hacer fallback a getTransactionStatus
  * en vez de marcar la transacción como FAILED (que sería un crimen contable).
  */
@@ -44,6 +43,21 @@ export class TransbankAlreadyProcessedError extends Error {
   constructor(token: string) {
     super(`[TransbankGateway] Transacción ya procesada (422) para token: ${token}`);
     this.name = "TransbankAlreadyProcessedError";
+  }
+}
+
+/**
+ * Error tipado para cuando Transbank responde 422 en refund.
+ * Significa que la transacción YA fue reembolsada/anulada previamente.
+ * El caso de uso lo captura para evitar doble reembolso (riesgo financiero).
+ *
+ * Transbank docs: response_code 310 = "Transacción anulada previamente"
+ * En la API REST, esto viene como HTTP 422 con error_message en el body.
+ */
+export class TransbankRefundAlreadyProcessedError extends Error {
+  constructor(token: string) {
+    super(`[TransbankGateway] Refund ya procesado (422) para token: ${token}`);
+    this.name = "TransbankRefundAlreadyProcessedError";
   }
 }
 
@@ -177,14 +191,25 @@ export class TransbankGateway {
    *
    * Regla de Transbank: solo se puede revertir dentro del mismo día contable.
    * Pasado ese límite, se llama "Anulación" y tiene sus propias restricciones.
+   *
+   * Timeout: 30s (vs 10s de otras operaciones). Los refunds pasan por
+   * aprobación del acquiring bank y pueden ser más lentos que un commit normal.
+   *
+   * 422 = refund ya procesado previamente. lanzamos TransbankRefundAlreadyProcessedError
+   * para que el caso de uso pueda detectar el doble-reembolso y actuar en consecuencia.
    */
   public async requestRefund(token: string, amount: number): Promise<WebpayRefundResponse> {
     const response = await fetch(`${this.baseUrl}${this.apiPath}/${token}/refunds`, {
       method: "POST",
       headers: this.headers,
       body: JSON.stringify({ amount }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(30_000), // 30s — refunds son más lentos
     });
+
+    // 422 = refund ya procesado (doble clic, reintento, etc.)
+    if (response.status === 422) {
+      throw new TransbankRefundAlreadyProcessedError(token);
+    }
 
     if (!response.ok) {
       const body = await response.text();

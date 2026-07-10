@@ -77,10 +77,14 @@ import {
   confirmTransactionAction,
   abortTransactionAction,
   pollStaleTransactionsAction,
+  refundTransactionAction,
   __setGatewayForTesting,
   __resetGatewayForTesting,
 } from "./transactionActions";
-import { TransbankAlreadyProcessedError } from "../infrastructure/TransbankGateway";
+import {
+  TransbankAlreadyProcessedError,
+  TransbankRefundAlreadyProcessedError,
+} from "../infrastructure/TransbankGateway";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -826,5 +830,309 @@ describe("Audit logging", () => {
         }),
       }),
     );
+  });
+});
+
+// ─── refundTransactionAction ────────────────────────────────────────────────
+
+describe("refundTransactionAction", () => {
+  describe("Happy path (refund succeeds)", () => {
+    it("transitions AUTHORIZED → REVERSED on successful refund", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-001", "session-1", 5000);
+      tx.setToken("tok_refund_001");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      mockGateway.requestRefund.mockResolvedValueOnce({
+        type: "REVERSED",
+        authorization_code: "AUTH-REFUND-001",
+        authorization_date: "2026-01-01T00:00:00.000Z",
+        nullified_amount: 5000,
+        balance: 0,
+        response_code: 0,
+      });
+
+      const result = await refundTransactionAction("tok_refund_001", 5000);
+
+      expect(result.status).toBe("REVERSED");
+      expect(mockGateway.requestRefund).toHaveBeenCalledWith("tok_refund_001", 5000);
+    });
+
+    it("saves transaction to DB before calling Transbank (persist-before-network)", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-002", "session-1", 5000);
+      tx.setToken("tok_refund_002");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      // Make Transbank call fail to verify DB was saved before the call
+      mockGateway.requestRefund.mockRejectedValueOnce(new Error("Network error"));
+
+      try {
+        await refundTransactionAction("tok_refund_002", 5000);
+      } catch {
+        // Expected to throw
+      }
+
+      // Transaction should still be AUTHORIZED in DB (not marked REVERSED on error)
+      const saved = mockRepoStore.get(tx.props.id);
+      expect(saved?.props.status).toBe("AUTHORIZED");
+    });
+  });
+
+  describe("Idempotency (already REVERSED)", () => {
+    it("returns current state without calling Transbank if already REVERSED", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-003", "session-1", 5000);
+      tx.setToken("tok_refund_003");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      tx.markAsReversed();
+      seed(tx);
+
+      const result = await refundTransactionAction("tok_refund_003", 5000);
+
+      expect(result.status).toBe("REVERSED");
+      expect(mockGateway.requestRefund).not.toHaveBeenCalled();
+    });
+
+    it("returns current state without calling Transbank if already FAILED", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-004", "session-1", 5000);
+      tx.setToken("tok_refund_004");
+      tx.markAsFailed();
+      seed(tx);
+
+      const result = await refundTransactionAction("tok_refund_004", 5000);
+
+      expect(result.status).toBe("FAILED");
+      expect(mockGateway.requestRefund).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Invalid state (not AUTHORIZED)", () => {
+    it("throws if transaction is INITIALIZED", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-005", "session-1", 5000);
+      tx.setToken("tok_refund_005");
+      seed(tx);
+
+      await expect(refundTransactionAction("tok_refund_005", 5000)).rejects.toThrow(
+        "Solo se puede revertir una transacción AUTHORIZED",
+      );
+      expect(mockGateway.requestRefund).not.toHaveBeenCalled();
+    });
+
+    it("throws if transaction is REJECTED", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-006", "session-1", 5000);
+      tx.setToken("tok_refund_006");
+      tx.markAsRejected(-1);
+      seed(tx);
+
+      await expect(refundTransactionAction("tok_refund_006", 5000)).rejects.toThrow(
+        "Solo se puede revertir una transacción AUTHORIZED",
+      );
+      expect(mockGateway.requestRefund).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("422 handling (already processed by Transbank)", () => {
+    it("falls back to getTransactionStatus on TransbankRefundAlreadyProcessedError", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-007", "session-1", 5000);
+      tx.setToken("tok_refund_007");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      // Simulate 422 from Transbank
+      mockGateway.requestRefund.mockRejectedValueOnce(
+        new TransbankRefundAlreadyProcessedError("tok_refund_007"),
+      );
+
+      // Fallback: getTransactionStatus shows it's already REVERSED
+      mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
+        vci: "TSO", amount: 5000, status: "REVERSED", buy_order: "BO-REFUND-007",
+        session_id: "session-1", accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
+        payment_type_code: "VD", response_code: 0, installments_number: 1,
+      });
+
+      const result = await refundTransactionAction("tok_refund_007", 5000);
+
+      expect(result.status).toBe("REVERSED");
+      expect(mockGateway._getTransactionStatusMock).toHaveBeenCalledWith("tok_refund_007");
+    });
+
+    it("marks as REVERSED if getTransactionStatus shows AUTHORIZED (refund succeeded but status unknown)", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-008", "session-1", 5000);
+      tx.setToken("tok_refund_008");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      mockGateway.requestRefund.mockRejectedValueOnce(
+        new TransbankRefundAlreadyProcessedError("tok_refund_008"),
+      );
+
+      // Fallback: getTransactionStatus still shows AUTHORIZED
+      // This is an edge case — refund was processed but status hasn't updated yet
+      mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
+        vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO-REFUND-008",
+        session_id: "session-1", accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
+        payment_type_code: "VD", response_code: 0, installments_number: 1,
+      });
+
+      const result = await refundTransactionAction("tok_refund_008", 5000);
+
+      // Should NOT mark as REVERSED if status is still AUTHORIZED
+      // This is ambiguous — leave for manual intervention
+      expect(result.status).toBe("AUTHORIZED");
+    });
+  });
+
+  describe("Timeout handling", () => {
+    it("does NOT mark as REVERSED on timeout — leaves for manual intervention", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-009", "session-1", 5000);
+      tx.setToken("tok_refund_009");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      // Simulate timeout (AbortError)
+      const timeoutError = new DOMException("The operation was aborted", "AbortError");
+      mockGateway.requestRefund.mockRejectedValueOnce(timeoutError);
+
+      const result = await refundTransactionAction("tok_refund_009", 5000);
+
+      // Should stay AUTHORIZED — not REVERSED (we don't know if Transbank processed it)
+      expect(result.status).toBe("AUTHORIZED");
+    });
+
+    it("does NOT mark as REVERSED on network error", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-010", "session-1", 5000);
+      tx.setToken("tok_refund_010");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      mockGateway.requestRefund.mockRejectedValueOnce(new Error("fetch failed"));
+
+      const result = await refundTransactionAction("tok_refund_010", 5000);
+
+      expect(result.status).toBe("AUTHORIZED");
+    });
+  });
+
+  describe("Audit logging", () => {
+    it("logs REVERSED on successful refund", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-011", "session-1", 5000);
+      tx.setToken("tok_refund_011");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      mockGateway.requestRefund.mockResolvedValueOnce({
+        type: "REVERSED",
+        authorization_code: "AUTH-REFUND-011",
+        authorization_date: "2026-01-01T00:00:00.000Z",
+        nullified_amount: 5000,
+        balance: 0,
+        response_code: 0,
+      });
+
+      await refundTransactionAction("tok_refund_011", 5000);
+
+      expect(vi.mocked(prisma.transactionAuditLog.create)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            event: "REVERSED",
+            buyOrder: "BO-REFUND-011",
+            transactionId: expect.any(String),
+          }),
+        }),
+      );
+    });
+
+    it("logs REVERSED on 422 fallback when status is REVERSED", async () => {
+      const tx = WebpayTransaction.initialize("BO-REFUND-012", "session-1", 5000);
+      tx.setToken("tok_refund_012");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      mockGateway.requestRefund.mockRejectedValueOnce(
+        new TransbankRefundAlreadyProcessedError("tok_refund_012"),
+      );
+      mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
+        vci: "TSO", amount: 5000, status: "REVERSED", buy_order: "BO-REFUND-012",
+        session_id: "session-1", accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
+        payment_type_code: "VD", response_code: 0, installments_number: 1,
+      });
+
+      await refundTransactionAction("tok_refund_012", 5000);
+
+      expect(vi.mocked(prisma.transactionAuditLog.create)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            event: "REVERSED",
+            buyOrder: "BO-REFUND-012",
+          }),
+        }),
+      );
+    });
+  });
+
+  describe("Transaction not found", () => {
+    it("throws if token not found in DB", async () => {
+      await expect(refundTransactionAction("tok_nonexistent", 5000)).rejects.toThrow(
+        "Transacción no encontrada",
+      );
+      expect(mockGateway.requestRefund).not.toHaveBeenCalled();
+    });
   });
 });

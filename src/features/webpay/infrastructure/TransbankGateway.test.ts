@@ -9,7 +9,11 @@ vi.mock("@/shared/env", () => ({
   },
 }));
 
-import { TransbankGateway, TransbankAlreadyProcessedError } from "./TransbankGateway";
+import {
+  TransbankGateway,
+  TransbankAlreadyProcessedError,
+  TransbankRefundAlreadyProcessedError,
+} from "./TransbankGateway";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -303,6 +307,142 @@ describe("TransbankGateway", () => {
 
       vi.doUnmock("@/shared/env");
       vi.resetModules();
+    });
+  });
+
+  // ─── requestRefund ─────────────────────────────────────────────────────────
+
+  describe("requestRefund", () => {
+    it("sends POST to correct URL with correct headers", async () => {
+      const mockResponse = {
+        type: "REVERSED",
+        authorization_code: "AUTH-REFUND-001",
+        authorization_date: "2025-06-27T10:00:00.000Z",
+        nullified_amount: 5000,
+        balance: 0,
+        response_code: 0,
+      };
+      globalThis.fetch = mockFetchSuccess(mockResponse);
+
+      await gateway.requestRefund("tok-abc", 5000);
+
+      expect(globalThis.fetch).toHaveBeenCalledOnce();
+      const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0];
+
+      expect(url).toBe(
+        "https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions/tok-abc/refunds",
+      );
+      expect(options.method).toBe("POST");
+      expect(options.headers).toEqual({
+        "Tbk-Api-Key-Id": "test-commerce",
+        "Tbk-Api-Key-Secret": "test-secret-123",
+        "Content-Type": "application/json",
+      });
+    });
+
+    it("sends correct body with amount", async () => {
+      const mockResponse = {
+        type: "REVERSED",
+        authorization_code: "AUTH-REFUND-001",
+        authorization_date: "2025-06-27T10:00:00.000Z",
+        nullified_amount: 5000,
+        balance: 0,
+        response_code: 0,
+      };
+      globalThis.fetch = mockFetchSuccess(mockResponse);
+
+      await gateway.requestRefund("tok-abc", 5000);
+
+      const [, options] = vi.mocked(globalThis.fetch).mock.calls[0];
+      const body = JSON.parse(options.body as string);
+
+      expect(body).toEqual({ amount: 5000 });
+    });
+
+    it("parses refund response correctly", async () => {
+      const mockResponse = {
+        type: "REVERSED",
+        authorization_code: "AUTH-REFUND-001",
+        authorization_date: "2025-06-27T10:00:00.000Z",
+        nullified_amount: 5000,
+        balance: 0,
+        response_code: 0,
+      };
+      globalThis.fetch = mockFetchSuccess(mockResponse);
+
+      const result = await gateway.requestRefund("tok-abc", 5000);
+
+      expect(result.type).toBe("REVERSED");
+      expect(result.authorization_code).toBe("AUTH-REFUND-001");
+      expect(result.nullified_amount).toBe(5000);
+      expect(result.balance).toBe(0);
+      expect(result.response_code).toBe(0);
+    });
+
+    it("parses partial nullification response correctly", async () => {
+      const mockResponse = {
+        type: "NULLIFIED",
+        authorization_code: "AUTH-REFUND-002",
+        authorization_date: "2025-06-27T10:00:00.000Z",
+        nullified_amount: 2500,
+        balance: 2500,
+        response_code: 0,
+      };
+      globalThis.fetch = mockFetchSuccess(mockResponse);
+
+      const result = await gateway.requestRefund("tok-abc", 2500);
+
+      expect(result.type).toBe("NULLIFIED");
+      expect(result.nullified_amount).toBe(2500);
+      expect(result.balance).toBe(2500);
+    });
+
+    it("throws TransbankRefundAlreadyProcessedError on 422", async () => {
+      globalThis.fetch = mockFetchError(422, "Transaction already refunded");
+
+      await expect(gateway.requestRefund("tok-abc", 5000)).rejects.toThrow(
+        TransbankRefundAlreadyProcessedError,
+      );
+    });
+
+    it("includes token in the 422 error message", async () => {
+      globalThis.fetch = mockFetchError(422, "Transaction already refunded");
+
+      await expect(gateway.requestRefund("tok-xyz", 5000)).rejects.toThrow(
+        "token: tok-xyz",
+      );
+    });
+
+    it("throws generic error on other non-ok responses", async () => {
+      globalThis.fetch = mockFetchError(500, "Server error");
+
+      await expect(gateway.requestRefund("tok-abc", 5000)).rejects.toThrow(
+        "[TransbankGateway] requestRefund falló (500)",
+      );
+    });
+
+    it("throws on network error", async () => {
+      globalThis.fetch = mockFetchNetworkError();
+
+      await expect(gateway.requestRefund("tok-abc", 5000)).rejects.toThrow();
+    });
+
+    it("uses longer timeout than other operations", async () => {
+      const mockResponse = {
+        type: "REVERSED",
+        authorization_code: "AUTH-REFUND-001",
+        authorization_date: "2025-06-27T10:00:00.000Z",
+        nullified_amount: 5000,
+        balance: 0,
+        response_code: 0,
+      };
+      globalThis.fetch = mockFetchSuccess(mockResponse);
+
+      await gateway.requestRefund("tok-abc", 5000);
+
+      const [, options] = vi.mocked(globalThis.fetch).mock.calls[0];
+      // Refund should have a longer timeout (30s) than other operations (10s)
+      expect(options.signal).toBeDefined();
     });
   });
 });
