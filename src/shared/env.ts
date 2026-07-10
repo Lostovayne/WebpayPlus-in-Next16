@@ -49,11 +49,10 @@ const data = parsedEnv.data;
 
 // Production-safe: BETTER_AUTH_URL must be explicitly set in production
 if (!data.BETTER_AUTH_URL) {
-  if (process.env.NODE_ENV === "development") {
-    data.BETTER_AUTH_URL = "http://localhost:3000";
-  } else {
+  if (process.env.NODE_ENV === "production") {
     throw new Error("BETTER_AUTH_URL is required in production — no default allowed");
   }
+  data.BETTER_AUTH_URL = "http://localhost:3000";
 }
 
 // After post-parse validation, BETTER_AUTH_URL is guaranteed to be defined
