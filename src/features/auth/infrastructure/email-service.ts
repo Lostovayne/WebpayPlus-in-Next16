@@ -13,7 +13,7 @@ const FROM_EMAIL = env.RESEND_FROM_EMAIL ?? "noreply@localhost";
  * Retry wrapper with exponential backoff for email sending.
  * Transient Resend failures (rate limits, network hiccups) are common.
  */
-async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 5): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
