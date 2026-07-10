@@ -229,7 +229,7 @@ describe("confirmTransactionAction", () => {
   describe("Error handling", () => {
     it("throws when token not found", async () => {
       await expect(confirmTransactionAction("nonexistent")).rejects.toThrow(
-        "Transacción no encontrada",
+        "Transaction not found",
       );
     });
 
@@ -282,7 +282,7 @@ describe("abortTransactionAction", () => {
 
     expect(loggerSpy).toHaveBeenCalledWith(
       expect.objectContaining({ buyOrder: "NONEXISTENT" }),
-      expect.stringContaining("buyOrder no encontrado"),
+      expect.stringContaining("buyOrder not found"),
     );
     loggerSpy.mockRestore();
   });
@@ -348,11 +348,11 @@ describe("initiateTransactionAction", () => {
 
   describe("Amount validation", () => {
     it("throws when amount is zero", async () => {
-      await expect(initiateTransactionAction(0)).rejects.toThrow("Monto inválido");
+      await expect(initiateTransactionAction(0)).rejects.toThrow("Invalid amount");
     });
 
     it("throws when amount is negative", async () => {
-      await expect(initiateTransactionAction(-1000)).rejects.toThrow("Monto inválido");
+      await expect(initiateTransactionAction(-1000)).rejects.toThrow("Invalid amount");
     });
 
     it("accepts maximum valid amount (999,999,999)", async () => {
@@ -373,7 +373,7 @@ describe("initiateTransactionAction", () => {
     it("marks transaction as FAILED and throws when Transbank rejects", async () => {
       mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
 
-      await expect(initiateTransactionAction(5000)).rejects.toThrow("Error al iniciar el pago. Intenta de nuevo más tarde.");
+      await expect(initiateTransactionAction(5000)).rejects.toThrow("Error initiating payment");
 
       const allTx = Array.from(mockRepoStore.values());
       expect(allTx).toHaveLength(1);
@@ -384,7 +384,7 @@ describe("initiateTransactionAction", () => {
       // First call: Transbank fails
       mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
 
-      await expect(initiateTransactionAction(5000)).rejects.toThrow("Error al iniciar el pago. Intenta de nuevo más tarde.");
+      await expect(initiateTransactionAction(5000)).rejects.toThrow("Error initiating payment");
 
       // Transaction should exist in DB even though Transbank failed
       const allTx = Array.from(mockRepoStore.values());
@@ -785,7 +785,7 @@ describe("Audit logging", () => {
   it("logs MARKED_FAILED when Transbank rejects on initiate", async () => {
     mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
 
-    await expect(initiateTransactionAction(5000)).rejects.toThrow("Error al iniciar el pago. Intenta de nuevo más tarde.");
+    await expect(initiateTransactionAction(5000)).rejects.toThrow("Error initiating payment");
 
     expect(auditLogMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -975,7 +975,7 @@ describe("refundTransactionAction", () => {
       seed(tx);
 
       await expect(refundTransactionAction("tok_refund_005", 5000)).rejects.toThrow(
-        "Solo se puede revertir una transacción AUTHORIZED",
+        "Only AUTHORIZED transactions can be reversed",
       );
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
     });
@@ -987,7 +987,7 @@ describe("refundTransactionAction", () => {
       seed(tx);
 
       await expect(refundTransactionAction("tok_refund_006", 5000)).rejects.toThrow(
-        "Solo se puede revertir una transacción AUTHORIZED",
+        "Only AUTHORIZED transactions can be reversed",
       );
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
     });
@@ -1174,7 +1174,7 @@ describe("refundTransactionAction", () => {
   describe("Transaction not found", () => {
     it("throws if token not found in DB", async () => {
       await expect(refundTransactionAction("tok_nonexistent", 5000)).rejects.toThrow(
-        "Transacción no encontrada",
+        "Transaction not found",
       );
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
     });
