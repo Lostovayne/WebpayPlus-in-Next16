@@ -634,6 +634,45 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
     expect(result.transactionDate?.toISOString()).toBe("2026-12-25T15:30:00.000Z");
   });
 
+  it("logs at warn level when audit log write fails (does not break transaction)", async () => {
+    const { default: logger } = await import("@/shared/lib/logger");
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+
+    const tx = WebpayTransaction.initialize("BO_AUDIT_FAIL", "session-1", 5000);
+    tx.setToken("tok_audit_fail");
+    seed(tx);
+
+    // Force prisma.create to throw on audit log writes
+    const originalCreate = prisma.transactionAuditLog.create;
+    prisma.transactionAuditLog.create = vi.fn().mockRejectedValue(new Error("DB connection lost"));
+
+    mockGateway._commitTransactionMock.mockResolvedValueOnce({
+      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO_AUDIT_FAIL",
+      session_id: "session-1", accounting_date: "0709",
+      transaction_date: "2026-07-09T12:00:00.000Z", authorization_code: "AUTH_AUDIT",
+      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      card_detail: { card_number: "1234567890123456" },
+    });
+
+    const result = await confirmTransactionAction("tok_audit_fail");
+
+    // Transaction should succeed despite audit failure
+    expect(result.status).toBe("AUTHORIZED");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ tag: "audit_log_failed" }),
+      expect.stringContaining("Failed to write audit log"),
+    );
+    expect(errorSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ tag: "audit_log_failed" }),
+      expect.anything(),
+    );
+
+    prisma.transactionAuditLog.create = originalCreate;
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
   it("stores audit trail from 422 fallback (getTransactionStatus)", async () => {
     const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
     tx.setToken("tok_audit_2");

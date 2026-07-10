@@ -57,7 +57,7 @@ async function logAuditEvent(
     });
   } catch (err) {
     // Audit log failure must NOT break the transaction flow
-    logger.error({ err, transactionId, buyOrder, event, tag: "audit_log_failed" }, "[Webpay] Failed to write audit log");
+    logger.warn({ err, transactionId, buyOrder, event, tag: "audit_log_failed" }, "[Webpay] Failed to write audit log");
   }
 }
 
