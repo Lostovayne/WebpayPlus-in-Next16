@@ -35,6 +35,9 @@ describe("withRetry", () => {
     const { sendVerificationEmail } = await import("./email-service");
     const promise = sendVerificationEmail("test@example.com", "http://localhost/verify");
 
+    // Attach handler immediately to prevent Vitest unhandled rejection detection
+    promise.catch(() => {});
+
     // Delays: 1s, 2s, 4s, 8s (capped at 10s)
     await vi.advanceTimersByTimeAsync(15000);
 
