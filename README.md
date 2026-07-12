@@ -83,7 +83,7 @@ Este repositorio resuelve todos estos casos. La implementación está auditada c
 | Testing | Vitest (99 tests) |
 | Package Manager | Bun |
 | Deploy | Vercel (Cron Jobs incluidos) |
-| SAST | FoxGuard (pre-commit hook) |
+| SAST | GGA (pre-commit hook) |
 
 ---
 
@@ -565,7 +565,6 @@ try {
 - [x] Pino structured logging
 - [x] Audit trail completo
 - [x] 99 tests con Vitest
-- [x] FoxGuard SAST (pre-commit)
 
 ### Próximos pasos 🔜
 
