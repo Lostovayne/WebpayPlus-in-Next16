@@ -98,10 +98,17 @@ function clearRepo() {
 
 function mockCommitAuthorized(overrides?: Record<string, unknown>) {
   mockGateway._commitTransactionMock.mockResolvedValueOnce({
-    vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-    session_id: "session-1", accounting_date: "0101",
-    transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-    payment_type_code: "VD", response_code: 0, installments_number: 1,
+    vci: "TSO",
+    amount: 5000,
+    status: "AUTHORIZED",
+    buy_order: "BO123",
+    session_id: "session-1",
+    accounting_date: "0101",
+    transaction_date: "2026-01-01T00:00:00.000Z",
+    authorization_code: "AUTH001",
+    payment_type_code: "VD",
+    response_code: 0,
+    installments_number: 1,
     card_detail: { card_number: "1234567890123456" },
     ...overrides,
   });
@@ -109,19 +116,33 @@ function mockCommitAuthorized(overrides?: Record<string, unknown>) {
 
 function mockCommitRejected(responseCode = -1) {
   mockGateway._commitTransactionMock.mockResolvedValueOnce({
-    vci: "TSO", amount: 5000, status: "REJECTED", buy_order: "BO123",
-    session_id: "session-1", accounting_date: "0101",
-    transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "",
-    payment_type_code: "VD", response_code: responseCode, installments_number: 1,
+    vci: "TSO",
+    amount: 5000,
+    status: "REJECTED",
+    buy_order: "BO123",
+    session_id: "session-1",
+    accounting_date: "0101",
+    transaction_date: "2026-01-01T00:00:00.000Z",
+    authorization_code: "",
+    payment_type_code: "VD",
+    response_code: responseCode,
+    installments_number: 1,
   });
 }
 
 function mockGetStatusAuthorized() {
   mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
-    vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-    session_id: "session-1", accounting_date: "0101",
-    transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-    payment_type_code: "VD", response_code: 0, installments_number: 1,
+    vci: "TSO",
+    amount: 5000,
+    status: "AUTHORIZED",
+    buy_order: "BO123",
+    session_id: "session-1",
+    accounting_date: "0101",
+    transaction_date: "2026-01-01T00:00:00.000Z",
+    authorization_code: "AUTH001",
+    payment_type_code: "VD",
+    response_code: 0,
+    installments_number: 1,
     card_detail: { card_number: "1234567890123456" },
   });
 }
@@ -222,7 +243,9 @@ describe("confirmTransactionAction", () => {
       const result = await confirmTransactionAction("tok_test_123");
 
       expect(result.status).toBe("AUTHORIZED");
-      expect(mockGateway._getTransactionStatusMock).toHaveBeenCalledWith("tok_test_123");
+      expect(mockGateway._getTransactionStatusMock).toHaveBeenCalledWith(
+        "tok_test_123",
+      );
     });
   });
 
@@ -238,27 +261,77 @@ describe("confirmTransactionAction", () => {
       tx.setToken("tok_test_123");
       seed(tx);
 
-      mockGateway._commitTransactionMock.mockRejectedValueOnce(new Error("Network error"));
+      mockGateway._commitTransactionMock.mockRejectedValueOnce(
+        new Error("Network error"),
+      );
 
       const result = await confirmTransactionAction("tok_test_123");
 
-    expect(result.status).toBe("FAILED");
+      expect(result.status).toBe("FAILED");
+    });
+
+    it("marks as FAILED when token is expired (integration: >10 min) without calling Transbank", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      tx.setToken("tok_expired_1");
+      // Integration form timeout is 10 minutes
+      tx.props.createdAt = new Date(Date.now() - 11 * 60 * 1000);
+      seed(tx);
+
+      const result = await confirmTransactionAction("tok_expired_1");
+
+      expect(result.status).toBe("FAILED");
+      // Should NOT call Transbank at all
+      expect(mockGateway._commitTransactionMock).not.toHaveBeenCalled();
+    });
+
+    it("marks as FAILED when Transbank buy_order does not match persisted transaction", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      tx.setToken("tok_mismatch_bo");
+      seed(tx);
+
+      mockGateway._commitTransactionMock.mockResolvedValueOnce({
+        vci: "TSO",
+        amount: 5000,
+        status: "AUTHORIZED",
+        buy_order: "WRONG_ORDER",
+        session_id: "session-1",
+        accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z",
+        authorization_code: "AUTH001",
+        payment_type_code: "VD",
+        response_code: 0,
+        installments_number: 1,
+      });
+
+      const result = await confirmTransactionAction("tok_mismatch_bo");
+
+      expect(result.status).toBe("FAILED");
+    });
+
+    it("marks as FAILED when Transbank amount does not match persisted transaction", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      tx.setToken("tok_mismatch_amt");
+      seed(tx);
+
+      mockGateway._commitTransactionMock.mockResolvedValueOnce({
+        vci: "TSO",
+        amount: 9999,
+        status: "AUTHORIZED",
+        buy_order: "BO123",
+        session_id: "session-1",
+        accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z",
+        authorization_code: "AUTH001",
+        payment_type_code: "VD",
+        response_code: 0,
+        installments_number: 1,
+      });
+
+      const result = await confirmTransactionAction("tok_mismatch_amt");
+
+      expect(result.status).toBe("FAILED");
+    });
   });
-
-  it("marks as FAILED when token is expired (>5 min) without calling Transbank", async () => {
-    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
-    tx.setToken("tok_expired_1");
-    // Simulate creation 6 minutes ago
-    tx.props.createdAt = new Date(Date.now() - 6 * 60 * 1000);
-    seed(tx);
-
-    const result = await confirmTransactionAction("tok_expired_1");
-
-    expect(result.status).toBe("FAILED");
-    // Should NOT call Transbank at all
-    expect(mockGateway._commitTransactionMock).not.toHaveBeenCalled();
-  });
-});
 });
 
 describe("abortTransactionAction", () => {
@@ -266,7 +339,7 @@ describe("abortTransactionAction", () => {
     const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
     seed(tx);
 
-    await abortTransactionAction("tbk_token_123", "BO123");
+    await abortTransactionAction("BO123", "tbk_token_123");
 
     const updated = mockRepoStore.get(tx.props.id);
     expect(updated).toBeDefined();
@@ -278,7 +351,7 @@ describe("abortTransactionAction", () => {
     const { default: logger } = await import("@/shared/lib/logger");
     const loggerSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
-    await abortTransactionAction("tbk_token_123", "NONEXISTENT");
+    await abortTransactionAction("NONEXISTENT", "tbk_token_123");
 
     expect(loggerSpy).toHaveBeenCalledWith(
       expect.objectContaining({ buyOrder: "NONEXISTENT" }),
@@ -301,10 +374,21 @@ describe("abortTransactionAction", () => {
     });
     seed(tx);
 
-    await abortTransactionAction("tbk_token_123", "BO123");
+    await abortTransactionAction("BO123", "tbk_token_123");
 
     const updated = mockRepoStore.get(tx.props.id);
     expect(updated!.props.status).toBe("AUTHORIZED");
+  });
+
+  it("marks transaction as ABORTED on timeout without TBK_TOKEN", async () => {
+    const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+    seed(tx);
+
+    await abortTransactionAction("BO123");
+
+    const updated = mockRepoStore.get(tx.props.id);
+    expect(updated!.props.status).toBe("ABORTED");
+    expect(updated!.props.abortedReason).toBe("timeout");
   });
 });
 
@@ -348,11 +432,15 @@ describe("initiateTransactionAction", () => {
 
   describe("Amount validation", () => {
     it("throws when amount is zero", async () => {
-      await expect(initiateTransactionAction(0)).rejects.toThrow("Invalid amount");
+      await expect(initiateTransactionAction(0)).rejects.toThrow(
+        "Invalid amount",
+      );
     });
 
     it("throws when amount is negative", async () => {
-      await expect(initiateTransactionAction(-1000)).rejects.toThrow("Invalid amount");
+      await expect(initiateTransactionAction(-1000)).rejects.toThrow(
+        "Invalid amount",
+      );
     });
 
     it("accepts maximum valid amount (999,999,999)", async () => {
@@ -371,9 +459,13 @@ describe("initiateTransactionAction", () => {
 
   describe("Transbank failure", () => {
     it("marks transaction as FAILED and throws when Transbank rejects", async () => {
-      mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
+      mockGateway._createTransactionMock.mockRejectedValueOnce(
+        new Error("Transbank down"),
+      );
 
-      await expect(initiateTransactionAction(5000)).rejects.toThrow("Error initiating payment");
+      await expect(initiateTransactionAction(5000)).rejects.toThrow(
+        "Error initiating payment",
+      );
 
       const allTx = Array.from(mockRepoStore.values());
       expect(allTx).toHaveLength(1);
@@ -382,14 +474,84 @@ describe("initiateTransactionAction", () => {
 
     it("persists transaction BEFORE calling Transbank (traceability)", async () => {
       // First call: Transbank fails
-      mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
+      mockGateway._createTransactionMock.mockRejectedValueOnce(
+        new Error("Transbank down"),
+      );
 
-      await expect(initiateTransactionAction(5000)).rejects.toThrow("Error initiating payment");
+      await expect(initiateTransactionAction(5000)).rejects.toThrow(
+        "Error initiating payment",
+      );
 
       // Transaction should exist in DB even though Transbank failed
       const allTx = Array.from(mockRepoStore.values());
       expect(allTx).toHaveLength(1);
       expect(allTx[0].props.status).toBe("FAILED");
+    });
+  });
+
+  describe("Idempotency (issue #16)", () => {
+    it("reuses INITIALIZED transaction with token and paymentUrl for same idempotencyKey", async () => {
+      const tx = WebpayTransaction.initialize("ORD|IDEM-1", "session-1", 5000);
+      tx.setToken("existing_token");
+      tx.setPaymentUrl(
+        "https://webpay3gint.transbank.cl/webpayserver/initTransaction",
+      );
+      seed(tx);
+
+      const result = await initiateTransactionAction(5000, "ORD|IDEM-1");
+
+      expect(result).toEqual({
+        url: "https://webpay3gint.transbank.cl/webpayserver/initTransaction",
+        token: "existing_token",
+      });
+      expect(mockGateway._createTransactionMock).not.toHaveBeenCalled();
+    });
+
+    it("throws when idempotencyKey reuses a terminal AUTHORIZED transaction", async () => {
+      const tx = WebpayTransaction.initialize("IDEM-AUTH", "session-1", 5000);
+      tx.setToken("tok_done");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        vci: "TSO",
+        accountingDate: "0101",
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      await expect(
+        initiateTransactionAction(5000, "IDEM-AUTH"),
+      ).rejects.toThrow("Transaction already processed");
+    });
+
+    it("throws when INITIALIZED exists but paymentUrl is missing", async () => {
+      const tx = WebpayTransaction.initialize("IDEM-PART", "session-1", 5000);
+      tx.setToken("partial_token");
+      seed(tx);
+
+      await expect(
+        initiateTransactionAction(5000, "IDEM-PART"),
+      ).rejects.toThrow("Transaction in progress");
+    });
+
+    it("rejects idempotencyKey outside Transbank buy_order charset", async () => {
+      await expect(initiateTransactionAction(5000, "inválido")).rejects.toThrow(
+        "Invalid idempotencyKey",
+      );
+    });
+
+    it("accepts idempotencyKey with Transbank special characters", async () => {
+      mockGateway._createTransactionMock.mockResolvedValueOnce({
+        token: "new_tok",
+        url: "https://webpay3gint.transbank.cl/webpayserver/initTransaction",
+      });
+
+      await initiateTransactionAction(5000, "A|B=1");
+
+      const allTx = Array.from(mockRepoStore.values());
+      expect(allTx.some((t) => t.props.buyOrder === "A|B=1")).toBe(true);
     });
   });
 });
@@ -404,17 +566,26 @@ describe("confirmTransactionAction - Additional cases", () => {
       new TransbankAlreadyProcessedError("tok_test_123"),
     );
     mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
-      vci: "TSO", amount: 5000, status: "REJECTED", buy_order: "BO123",
-      session_id: "session-1", accounting_date: "0101",
-      transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "",
-      payment_type_code: "VD", response_code: -1, installments_number: 1,
+      vci: "TSO",
+      amount: 5000,
+      status: "REJECTED",
+      buy_order: "BO123",
+      session_id: "session-1",
+      accounting_date: "0101",
+      transaction_date: "2026-01-01T00:00:00.000Z",
+      authorization_code: "",
+      payment_type_code: "VD",
+      response_code: -1,
+      installments_number: 1,
     });
 
     const result = await confirmTransactionAction("tok_test_123");
 
     expect(result.status).toBe("REJECTED");
     expect(result.responseCode).toBe(-1);
-    expect(mockGateway._getTransactionStatusMock).toHaveBeenCalledWith("tok_test_123");
+    expect(mockGateway._getTransactionStatusMock).toHaveBeenCalledWith(
+      "tok_test_123",
+    );
   });
 
   it("422 → getTransactionStatus throws → marks as FAILED (error propagates to outer catch)", async () => {
@@ -425,7 +596,9 @@ describe("confirmTransactionAction - Additional cases", () => {
     mockGateway._commitTransactionMock.mockRejectedValueOnce(
       new TransbankAlreadyProcessedError("tok_test_123"),
     );
-    mockGateway._getTransactionStatusMock.mockRejectedValueOnce(new Error("Network error"));
+    mockGateway._getTransactionStatusMock.mockRejectedValueOnce(
+      new Error("Network error"),
+    );
 
     const result = await confirmTransactionAction("tok_test_123");
 
@@ -445,10 +618,17 @@ describe("pollStaleTransactionsAction", () => {
       seed(tx);
 
       mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
-        vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-        session_id: "session-1", accounting_date: "0101",
-        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-        payment_type_code: "VD", response_code: 0, installments_number: 1,
+        vci: "TSO",
+        amount: 5000,
+        status: "AUTHORIZED",
+        buy_order: "BO123",
+        session_id: "session-1",
+        accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z",
+        authorization_code: "AUTH001",
+        payment_type_code: "VD",
+        response_code: 0,
+        installments_number: 1,
       });
 
       const result = await pollStaleTransactionsAction();
@@ -470,10 +650,17 @@ describe("pollStaleTransactionsAction", () => {
       seed(tx);
 
       mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
-        vci: "TSO", amount: 5000, status: "REJECTED", buy_order: "BO123",
-        session_id: "session-1", accounting_date: "0101",
-        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "",
-        payment_type_code: "VD", response_code: -1, installments_number: 1,
+        vci: "TSO",
+        amount: 5000,
+        status: "REJECTED",
+        buy_order: "BO123",
+        session_id: "session-1",
+        accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z",
+        authorization_code: "",
+        payment_type_code: "VD",
+        response_code: -1,
+        installments_number: 1,
       });
 
       const result = await pollStaleTransactionsAction();
@@ -507,10 +694,17 @@ describe("pollStaleTransactionsAction", () => {
       seed(tx);
 
       mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
-        vci: "TSO", amount: 5000, status: "INITIALIZED", buy_order: "BO123",
-        session_id: "session-1", accounting_date: "0101",
-        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "",
-        payment_type_code: "", response_code: undefined, installments_number: 0,
+        vci: "TSO",
+        amount: 5000,
+        status: "INITIALIZED",
+        buy_order: "BO123",
+        session_id: "session-1",
+        accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z",
+        authorization_code: "",
+        payment_type_code: "",
+        response_code: undefined,
+        installments_number: 0,
       });
 
       const result = await pollStaleTransactionsAction();
@@ -533,7 +727,9 @@ describe("pollStaleTransactionsAction", () => {
       tx.props.createdAt = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
       seed(tx);
 
-      mockGateway._getTransactionStatusMock.mockRejectedValueOnce(new Error("Network error"));
+      mockGateway._getTransactionStatusMock.mockRejectedValueOnce(
+        new Error("Network error"),
+      );
 
       const result = await pollStaleTransactionsAction();
 
@@ -551,7 +747,9 @@ describe("pollStaleTransactionsAction", () => {
       tx.props.createdAt = new Date(Date.now() - 15 * 60 * 1000);
       seed(tx);
 
-      mockGateway._getTransactionStatusMock.mockRejectedValueOnce(new Error("Network error"));
+      mockGateway._getTransactionStatusMock.mockRejectedValueOnce(
+        new Error("Network error"),
+      );
 
       const result = await pollStaleTransactionsAction();
 
@@ -589,10 +787,17 @@ describe("pollStaleTransactionsAction", () => {
           });
         }
         return {
-          vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO-RACE-1",
-          session_id: "session-1", accounting_date: "0101",
-          transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-          payment_type_code: "VD", response_code: 0, installments_number: 1,
+          vci: "TSO",
+          amount: 5000,
+          status: "AUTHORIZED",
+          buy_order: "BO-RACE-1",
+          session_id: "session-1",
+          accounting_date: "0101",
+          transaction_date: "2026-01-01T00:00:00.000Z",
+          authorization_code: "AUTH001",
+          payment_type_code: "VD",
+          response_code: 0,
+          installments_number: 1,
         };
       });
 
@@ -618,10 +823,17 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
     seed(tx);
 
     mockGateway._commitTransactionMock.mockResolvedValueOnce({
-      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-      session_id: "session-1", accounting_date: "1225",
-      transaction_date: "2026-12-25T15:30:00.000Z", authorization_code: "AUTH999",
-      payment_type_code: "VN", response_code: 0, installments_number: 3,
+      vci: "TSO",
+      amount: 5000,
+      status: "AUTHORIZED",
+      buy_order: "BO123",
+      session_id: "session-1",
+      accounting_date: "1225",
+      transaction_date: "2026-12-25T15:30:00.000Z",
+      authorization_code: "AUTH999",
+      payment_type_code: "VN",
+      response_code: 0,
+      installments_number: 3,
       card_detail: { card_number: "4444333322221111" },
     });
 
@@ -631,7 +843,9 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
     expect(result.cardNumber).toBe("1111"); // last 4 of "4444333322221111"
     expect(result.accountingDate).toBe("1225");
     expect(result.transactionDate).toBeInstanceOf(Date);
-    expect(result.transactionDate?.toISOString()).toBe("2026-12-25T15:30:00.000Z");
+    expect(result.transactionDate?.toISOString()).toBe(
+      "2026-12-25T15:30:00.000Z",
+    );
   });
 
   it("logs at warn level when audit log write fails (does not break transaction)", async () => {
@@ -645,13 +859,22 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
 
     // Force prisma.create to throw on audit log writes
     const originalCreate = prisma.transactionAuditLog.create;
-    prisma.transactionAuditLog.create = vi.fn().mockRejectedValue(new Error("DB connection lost"));
+    prisma.transactionAuditLog.create = vi
+      .fn()
+      .mockRejectedValue(new Error("DB connection lost"));
 
     mockGateway._commitTransactionMock.mockResolvedValueOnce({
-      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO_AUDIT_FAIL",
-      session_id: "session-1", accounting_date: "0709",
-      transaction_date: "2026-07-09T12:00:00.000Z", authorization_code: "AUTH_AUDIT",
-      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      vci: "TSO",
+      amount: 5000,
+      status: "AUTHORIZED",
+      buy_order: "BO_AUDIT_FAIL",
+      session_id: "session-1",
+      accounting_date: "0709",
+      transaction_date: "2026-07-09T12:00:00.000Z",
+      authorization_code: "AUTH_AUDIT",
+      payment_type_code: "VD",
+      response_code: 0,
+      installments_number: 1,
       card_detail: { card_number: "1234567890123456" },
     });
 
@@ -682,10 +905,17 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
       new TransbankAlreadyProcessedError("tok_audit_2"),
     );
     mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
-      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-      session_id: "session-1", accounting_date: "0615",
-      transaction_date: "2026-06-15T10:00:00.000Z", authorization_code: "AUTH422",
-      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      vci: "TSO",
+      amount: 5000,
+      status: "AUTHORIZED",
+      buy_order: "BO123",
+      session_id: "session-1",
+      accounting_date: "0615",
+      transaction_date: "2026-06-15T10:00:00.000Z",
+      authorization_code: "AUTH422",
+      payment_type_code: "VD",
+      response_code: 0,
+      installments_number: 1,
       card_detail: { card_number: "5555666677778888" },
     });
 
@@ -704,10 +934,17 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
     seed(tx);
 
     mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
-      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-      session_id: "session-1", accounting_date: "0320",
-      transaction_date: "2026-03-20T08:45:00.000Z", authorization_code: "AUTHPOLL",
-      payment_type_code: "VN", response_code: 0, installments_number: 6,
+      vci: "TSO",
+      amount: 5000,
+      status: "AUTHORIZED",
+      buy_order: "BO123",
+      session_id: "session-1",
+      accounting_date: "0320",
+      transaction_date: "2026-03-20T08:45:00.000Z",
+      authorization_code: "AUTHPOLL",
+      payment_type_code: "VN",
+      response_code: 0,
+      installments_number: 6,
       card_detail: { card_number: "9999888877776666" },
     });
 
@@ -726,10 +963,17 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
     seed(tx);
 
     mockGateway._commitTransactionMock.mockResolvedValueOnce({
-      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-      session_id: "session-1", accounting_date: "0101",
-      transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      vci: "TSO",
+      amount: 5000,
+      status: "AUTHORIZED",
+      buy_order: "BO123",
+      session_id: "session-1",
+      accounting_date: "0101",
+      transaction_date: "2026-01-01T00:00:00.000Z",
+      authorization_code: "AUTH001",
+      payment_type_code: "VD",
+      response_code: 0,
+      installments_number: 1,
       // No card_detail
     });
 
@@ -745,10 +989,17 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
     seed(tx);
 
     mockGateway._commitTransactionMock.mockResolvedValueOnce({
-      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-      session_id: "session-1", accounting_date: "0101",
-      transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      vci: "TSO",
+      amount: 5000,
+      status: "AUTHORIZED",
+      buy_order: "BO123",
+      session_id: "session-1",
+      accounting_date: "0101",
+      transaction_date: "2026-01-01T00:00:00.000Z",
+      authorization_code: "AUTH001",
+      payment_type_code: "VD",
+      response_code: 0,
+      installments_number: 1,
       card_detail: { card_number: "" },
     });
 
@@ -763,10 +1014,17 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
     seed(tx);
 
     mockGateway._commitTransactionMock.mockResolvedValueOnce({
-      vci: null, amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-      session_id: "session-1", accounting_date: "0101",
-      transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      vci: null,
+      amount: 5000,
+      status: "AUTHORIZED",
+      buy_order: "BO123",
+      session_id: "session-1",
+      accounting_date: "0101",
+      transaction_date: "2026-01-01T00:00:00.000Z",
+      authorization_code: "AUTH001",
+      payment_type_code: "VD",
+      response_code: 0,
+      installments_number: 1,
     });
 
     const result = await confirmTransactionAction("tok_audit_6");
@@ -780,10 +1038,17 @@ describe("Audit trail — verify all 4 fields stored correctly", () => {
     seed(tx);
 
     mockGateway._commitTransactionMock.mockResolvedValueOnce({
-      vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-      session_id: "session-1", accounting_date: "0101",
-      transaction_date: "not-a-real-date", authorization_code: "AUTH001",
-      payment_type_code: "VD", response_code: 0, installments_number: 1,
+      vci: "TSO",
+      amount: 5000,
+      status: "AUTHORIZED",
+      buy_order: "BO123",
+      session_id: "session-1",
+      accounting_date: "0101",
+      transaction_date: "not-a-real-date",
+      authorization_code: "AUTH001",
+      payment_type_code: "VD",
+      response_code: 0,
+      installments_number: 1,
     });
 
     // Domain throws Invalid Date → caught by outer catch → marks FAILED
@@ -822,9 +1087,13 @@ describe("Audit logging", () => {
   });
 
   it("logs MARKED_FAILED when Transbank rejects on initiate", async () => {
-    mockGateway._createTransactionMock.mockRejectedValueOnce(new Error("Transbank down"));
+    mockGateway._createTransactionMock.mockRejectedValueOnce(
+      new Error("Transbank down"),
+    );
 
-    await expect(initiateTransactionAction(5000)).rejects.toThrow("Error initiating payment");
+    await expect(initiateTransactionAction(5000)).rejects.toThrow(
+      "Error initiating payment",
+    );
 
     expect(auditLogMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -879,7 +1148,7 @@ describe("Audit logging", () => {
     const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
     seed(tx);
 
-    await abortTransactionAction("tbk_token_123", "BO123");
+    await abortTransactionAction("BO123", "tbk_token_123");
 
     expect(auditLogMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -900,7 +1169,9 @@ describe("Audit logging", () => {
     mockGateway._commitTransactionMock.mockRejectedValueOnce(
       new TransbankAlreadyProcessedError("tok_confirm_audit_3"),
     );
-    mockGateway._getTransactionStatusMock.mockRejectedValueOnce(new Error("Network error"));
+    mockGateway._getTransactionStatusMock.mockRejectedValueOnce(
+      new Error("Network error"),
+    );
 
     await confirmTransactionAction("tok_confirm_audit_3");
 
@@ -921,7 +1192,11 @@ describe("Audit logging", () => {
 describe("refundTransactionAction", () => {
   describe("Happy path (refund succeeds)", () => {
     it("transitions AUTHORIZED → REVERSED on successful refund", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-001", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-001",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_001");
       tx.markAsAuthorized({
         authorizationCode: "AUTH001",
@@ -944,11 +1219,18 @@ describe("refundTransactionAction", () => {
       const result = await refundTransactionAction("tok_refund_001", 5000);
 
       expect(result.status).toBe("REVERSED");
-      expect(mockGateway.requestRefund).toHaveBeenCalledWith("tok_refund_001", 5000);
+      expect(mockGateway.requestRefund).toHaveBeenCalledWith(
+        "tok_refund_001",
+        5000,
+      );
     });
 
     it("saves transaction to DB before calling Transbank (persist-before-network)", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-002", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-002",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_002");
       tx.markAsAuthorized({
         authorizationCode: "AUTH001",
@@ -960,7 +1242,9 @@ describe("refundTransactionAction", () => {
       seed(tx);
 
       // Make Transbank call fail to verify DB was saved before the call
-      mockGateway.requestRefund.mockRejectedValueOnce(new Error("Network error"));
+      mockGateway.requestRefund.mockRejectedValueOnce(
+        new Error("Network error"),
+      );
 
       try {
         await refundTransactionAction("tok_refund_002", 5000);
@@ -976,7 +1260,11 @@ describe("refundTransactionAction", () => {
 
   describe("Idempotency (already REVERSED)", () => {
     it("returns current state without calling Transbank if already REVERSED", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-003", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-003",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_003");
       tx.markAsAuthorized({
         authorizationCode: "AUTH001",
@@ -994,47 +1282,65 @@ describe("refundTransactionAction", () => {
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
     });
 
-    it("returns current state without calling Transbank if already FAILED", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-004", "session-1", 5000);
+    it("throws when transaction is FAILED (never authorized)", async () => {
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-004",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_004");
       tx.markAsFailed();
       seed(tx);
 
-      const result = await refundTransactionAction("tok_refund_004", 5000);
-
-      expect(result.status).toBe("FAILED");
+      await expect(
+        refundTransactionAction("tok_refund_004", 5000),
+      ).rejects.toThrow(
+        "Only AUTHORIZED transactions can be reversed. Current status: FAILED",
+      );
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
     });
   });
 
   describe("Invalid state (not AUTHORIZED)", () => {
     it("throws if transaction is INITIALIZED", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-005", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-005",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_005");
       seed(tx);
 
-      await expect(refundTransactionAction("tok_refund_005", 5000)).rejects.toThrow(
-        "Only AUTHORIZED transactions can be reversed",
-      );
+      await expect(
+        refundTransactionAction("tok_refund_005", 5000),
+      ).rejects.toThrow("Only AUTHORIZED transactions can be reversed");
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
     });
 
     it("throws if transaction is REJECTED", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-006", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-006",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_006");
       tx.markAsRejected(-1);
       seed(tx);
 
-      await expect(refundTransactionAction("tok_refund_006", 5000)).rejects.toThrow(
-        "Only AUTHORIZED transactions can be reversed",
-      );
+      await expect(
+        refundTransactionAction("tok_refund_006", 5000),
+      ).rejects.toThrow("Only AUTHORIZED transactions can be reversed");
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
     });
   });
 
   describe("422 handling (already processed by Transbank)", () => {
     it("falls back to getTransactionStatus on TransbankRefundAlreadyProcessedError", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-007", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-007",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_007");
       tx.markAsAuthorized({
         authorizationCode: "AUTH001",
@@ -1052,20 +1358,33 @@ describe("refundTransactionAction", () => {
 
       // Fallback: getTransactionStatus shows it's already REVERSED
       mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
-        vci: "TSO", amount: 5000, status: "REVERSED", buy_order: "BO-REFUND-007",
-        session_id: "session-1", accounting_date: "0101",
-        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-        payment_type_code: "VD", response_code: 0, installments_number: 1,
+        vci: "TSO",
+        amount: 5000,
+        status: "REVERSED",
+        buy_order: "BO-REFUND-007",
+        session_id: "session-1",
+        accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z",
+        authorization_code: "AUTH001",
+        payment_type_code: "VD",
+        response_code: 0,
+        installments_number: 1,
       });
 
       const result = await refundTransactionAction("tok_refund_007", 5000);
 
       expect(result.status).toBe("REVERSED");
-      expect(mockGateway._getTransactionStatusMock).toHaveBeenCalledWith("tok_refund_007");
+      expect(mockGateway._getTransactionStatusMock).toHaveBeenCalledWith(
+        "tok_refund_007",
+      );
     });
 
     it("marks as REVERSED if getTransactionStatus shows AUTHORIZED (refund succeeded but status unknown)", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-008", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-008",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_008");
       tx.markAsAuthorized({
         authorizationCode: "AUTH001",
@@ -1083,10 +1402,17 @@ describe("refundTransactionAction", () => {
       // Fallback: getTransactionStatus still shows AUTHORIZED
       // This is an edge case — refund was processed but status hasn't updated yet
       mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
-        vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO-REFUND-008",
-        session_id: "session-1", accounting_date: "0101",
-        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-        payment_type_code: "VD", response_code: 0, installments_number: 1,
+        vci: "TSO",
+        amount: 5000,
+        status: "AUTHORIZED",
+        buy_order: "BO-REFUND-008",
+        session_id: "session-1",
+        accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z",
+        authorization_code: "AUTH001",
+        payment_type_code: "VD",
+        response_code: 0,
+        installments_number: 1,
       });
 
       const result = await refundTransactionAction("tok_refund_008", 5000);
@@ -1099,7 +1425,11 @@ describe("refundTransactionAction", () => {
 
   describe("Timeout handling", () => {
     it("does NOT mark as REVERSED on timeout — leaves for manual intervention", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-009", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-009",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_009");
       tx.markAsAuthorized({
         authorizationCode: "AUTH001",
@@ -1111,7 +1441,10 @@ describe("refundTransactionAction", () => {
       seed(tx);
 
       // Simulate timeout (AbortError)
-      const timeoutError = new DOMException("The operation was aborted", "AbortError");
+      const timeoutError = new DOMException(
+        "The operation was aborted",
+        "AbortError",
+      );
       mockGateway.requestRefund.mockRejectedValueOnce(timeoutError);
 
       const result = await refundTransactionAction("tok_refund_009", 5000);
@@ -1121,7 +1454,11 @@ describe("refundTransactionAction", () => {
     });
 
     it("does NOT mark as REVERSED on network error", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-010", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-010",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_010");
       tx.markAsAuthorized({
         authorizationCode: "AUTH001",
@@ -1132,7 +1469,9 @@ describe("refundTransactionAction", () => {
       });
       seed(tx);
 
-      mockGateway.requestRefund.mockRejectedValueOnce(new Error("fetch failed"));
+      mockGateway.requestRefund.mockRejectedValueOnce(
+        new Error("fetch failed"),
+      );
 
       const result = await refundTransactionAction("tok_refund_010", 5000);
 
@@ -1142,7 +1481,11 @@ describe("refundTransactionAction", () => {
 
   describe("Audit logging", () => {
     it("logs REVERSED on successful refund", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-011", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-011",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_011");
       tx.markAsAuthorized({
         authorizationCode: "AUTH001",
@@ -1176,7 +1519,11 @@ describe("refundTransactionAction", () => {
     });
 
     it("logs REVERSED on 422 fallback when status is REVERSED", async () => {
-      const tx = WebpayTransaction.initialize("BO-REFUND-012", "session-1", 5000);
+      const tx = WebpayTransaction.initialize(
+        "BO-REFUND-012",
+        "session-1",
+        5000,
+      );
       tx.setToken("tok_refund_012");
       tx.markAsAuthorized({
         authorizationCode: "AUTH001",
@@ -1191,10 +1538,17 @@ describe("refundTransactionAction", () => {
         new TransbankRefundAlreadyProcessedError("tok_refund_012"),
       );
       mockGateway._getTransactionStatusMock.mockResolvedValueOnce({
-        vci: "TSO", amount: 5000, status: "REVERSED", buy_order: "BO-REFUND-012",
-        session_id: "session-1", accounting_date: "0101",
-        transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-        payment_type_code: "VD", response_code: 0, installments_number: 1,
+        vci: "TSO",
+        amount: 5000,
+        status: "REVERSED",
+        buy_order: "BO-REFUND-012",
+        session_id: "session-1",
+        accounting_date: "0101",
+        transaction_date: "2026-01-01T00:00:00.000Z",
+        authorization_code: "AUTH001",
+        payment_type_code: "VD",
+        response_code: 0,
+        installments_number: 1,
       });
 
       await refundTransactionAction("tok_refund_012", 5000);
@@ -1212,9 +1566,9 @@ describe("refundTransactionAction", () => {
 
   describe("Transaction not found", () => {
     it("throws if token not found in DB", async () => {
-      await expect(refundTransactionAction("tok_nonexistent", 5000)).rejects.toThrow(
-        "Transaction not found",
-      );
+      await expect(
+        refundTransactionAction("tok_nonexistent", 5000),
+      ).rejects.toThrow("Transaction not found");
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
     });
   });

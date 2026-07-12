@@ -8,7 +8,11 @@ import {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function createTransaction(overrides?: { status?: TransactionStatus }) {
-  const tx = WebpayTransaction.initialize("BO123456789012345678", "session-1", 5000);
+  const tx = WebpayTransaction.initialize(
+    "BO123456789012345678",
+    "session-1",
+    5000,
+  );
   if (overrides?.status) {
     applyStatus(tx, overrides.status);
   }
@@ -66,20 +70,29 @@ describe("WebpayTransaction.initialize", () => {
   });
 
   it("rejects amount <= 0", () => {
-    expect(() => WebpayTransaction.initialize("BO123", "s", 0)).toThrow("mayor a cero");
-    expect(() => WebpayTransaction.initialize("BO123", "s", -100)).toThrow("mayor a cero");
+    expect(() => WebpayTransaction.initialize("BO123", "s", 0)).toThrow(
+      "greater than zero",
+    );
+    expect(() => WebpayTransaction.initialize("BO123", "s", -100)).toThrow(
+      "greater than zero",
+    );
   });
 
   it("rejects amount > 999,999,999", () => {
-    expect(() => WebpayTransaction.initialize("BO123", "s", 1_000_000_000)).toThrow(
-      "supera el máximo",
-    );
+    expect(() =>
+      WebpayTransaction.initialize("BO123", "s", 1_000_000_000),
+    ).toThrow("exceeds Transbank CLP limit");
   });
 
   it("rejects buy_order > 26 chars", () => {
-    expect(() => WebpayTransaction.initialize("A".repeat(27), "s", 1000)).toThrow(
-      "26 caracteres",
-    );
+    expect(() =>
+      WebpayTransaction.initialize("A".repeat(27), "s", 1000),
+    ).toThrow("buy_order is invalid");
+  });
+
+  it("accepts buy_order with Transbank allowed special characters", () => {
+    const tx = WebpayTransaction.initialize("ORD|123=A", "s", 1000);
+    expect(tx.props.buyOrder).toBe("ORD|123=A");
   });
 
   it("accepts buy_order exactly 26 chars", () => {
@@ -88,9 +101,9 @@ describe("WebpayTransaction.initialize", () => {
   });
 
   it("rejects session_id > 61 chars (Transbank limit)", () => {
-    expect(() => WebpayTransaction.initialize("BO123", "x".repeat(62), 1000)).toThrow(
-      "61 caracteres",
-    );
+    expect(() =>
+      WebpayTransaction.initialize("BO123", "x".repeat(62), 1000),
+    ).toThrow("61 characters");
   });
 
   it("accepts session_id exactly 61 chars", () => {
@@ -111,7 +124,7 @@ describe("State transitions", () => {
 
     it("throws when not INITIALIZED", () => {
       const tx = createTransaction({ status: "AUTHORIZED" });
-      expect(() => tx.setToken("tok_abc123")).toThrow("requiere estado \"INITIALIZED\"");
+      expect(() => tx.setToken("tok_abc123")).toThrow('requires "INITIALIZED"');
     });
   });
 
@@ -135,7 +148,9 @@ describe("State transitions", () => {
       expect(tx.props.cardNumber).toBe("1234");
       expect(tx.props.accountingDate).toBe("0101");
       expect(tx.props.transactionDate).toBeInstanceOf(Date);
-      expect(tx.props.transactionDate?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+      expect(tx.props.transactionDate?.toISOString()).toBe(
+        "2026-01-01T00:00:00.000Z",
+      );
     });
 
     it("handles optional cardNumber (undefined when not provided by Transbank)", () => {
@@ -155,7 +170,7 @@ describe("State transitions", () => {
           ...validCommitData,
           cardNumber: "12345",
         }),
-      ).toThrow("cardNumber debe ser máximo 4 dígitos");
+      ).toThrow("cardNumber must be at most 4 digits");
     });
 
     it("throws when transactionDate is invalid ISO string", () => {
@@ -165,7 +180,7 @@ describe("State transitions", () => {
           ...validCommitData,
           transactionDate: "not-a-date",
         }),
-      ).toThrow("transactionDate inválida");
+      ).toThrow("Invalid transactionDate");
     });
 
     it("throws when transactionDate is empty string", () => {
@@ -175,12 +190,14 @@ describe("State transitions", () => {
           ...validCommitData,
           transactionDate: "",
         }),
-      ).toThrow("transactionDate inválida");
+      ).toThrow("Invalid transactionDate");
     });
 
     it("throws when not INITIALIZED", () => {
       const tx = createTransaction({ status: "AUTHORIZED" });
-      expect(() => tx.markAsAuthorized(validCommitData)).toThrow("requiere estado \"INITIALIZED\"");
+      expect(() => tx.markAsAuthorized(validCommitData)).toThrow(
+        'requires "INITIALIZED"',
+      );
     });
   });
 
@@ -195,7 +212,7 @@ describe("State transitions", () => {
 
     it("throws when not INITIALIZED", () => {
       const tx = createTransaction({ status: "AUTHORIZED" });
-      expect(() => tx.markAsRejected(-1)).toThrow("requiere estado \"INITIALIZED\"");
+      expect(() => tx.markAsRejected(-1)).toThrow('requires "INITIALIZED"');
     });
   });
 
@@ -217,7 +234,9 @@ describe("State transitions", () => {
 
     it("throws when not INITIALIZED", () => {
       const tx = createTransaction({ status: "AUTHORIZED" });
-      expect(() => tx.markAsAbortedByClient("reason")).toThrow("requiere estado \"INITIALIZED\"");
+      expect(() => tx.markAsAbortedByClient("reason")).toThrow(
+        'requires "INITIALIZED"',
+      );
     });
   });
 
@@ -230,17 +249,23 @@ describe("State transitions", () => {
 
     it("throws when AUTHORIZED (cannot rollback)", () => {
       const tx = createTransaction({ status: "AUTHORIZED" });
-      expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "AUTHORIZED"');
+      expect(() => tx.markAsFailed()).toThrow(
+        'Cannot mark FAILED: transaction is in "AUTHORIZED"',
+      );
     });
 
     it("throws when REJECTED (preserves rejection reason)", () => {
       const tx = createTransaction({ status: "REJECTED" });
-      expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "REJECTED"');
+      expect(() => tx.markAsFailed()).toThrow(
+        'Cannot mark FAILED: transaction is in "REJECTED"',
+      );
     });
 
     it("throws when ABORTED (preserves abort reason)", () => {
       const tx = createTransaction({ status: "ABORTED" });
-      expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "ABORTED"');
+      expect(() => tx.markAsFailed()).toThrow(
+        'Cannot mark FAILED: transaction is in "ABORTED"',
+      );
     });
   });
 
@@ -253,7 +278,9 @@ describe("State transitions", () => {
 
     it("throws when not AUTHORIZED", () => {
       const tx = createTransaction();
-      expect(() => tx.markAsReversed()).toThrow("Solo se puede revertir una transacción AUTHORIZED");
+      expect(() => tx.markAsReversed()).toThrow(
+        "Only AUTHORIZED transactions can be reversed",
+      );
     });
   });
 
@@ -356,12 +383,16 @@ describe("Invalid transitions", () => {
   it("cannot markAsAuthorized after markAsRejected", () => {
     const tx = createTransaction();
     tx.markAsRejected(-1);
-    expect(() => tx.markAsAuthorized(validCommitData)).toThrow("requiere estado \"INITIALIZED\"");
+    expect(() => tx.markAsAuthorized(validCommitData)).toThrow(
+      'requires "INITIALIZED"',
+    );
   });
 
   it("blocks markAsFailed after markAsRejected (preserves terminal state)", () => {
     const tx = createTransaction();
     tx.markAsRejected(-1);
-    expect(() => tx.markAsFailed()).toThrow('No se puede marcar FAILED una transacción en estado "REJECTED"');
+    expect(() => tx.markAsFailed()).toThrow(
+      'Cannot mark FAILED: transaction is in "REJECTED"',
+    );
   });
 });

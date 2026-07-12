@@ -4,12 +4,16 @@ import { env } from "@/shared/env";
 import logger from "@/shared/lib/logger";
 import { prisma } from "@/shared/lib/prisma";
 import { AuditEvent, Prisma } from "generated/prisma";
-import { WebpayTransaction } from "../domain/Transaction";
+import {
+  WebpayTransaction,
+  isValidTransbankBuyOrder,
+} from "../domain/Transaction";
 import { transactionRepository } from "../infrastructure/PrismaTransactionRepository";
 import {
   TransbankAlreadyProcessedError,
   TransbankRefundAlreadyProcessedError,
   TransbankGateway,
+  type WebpayCommitResponse,
 } from "../infrastructure/TransbankGateway";
 
 // Lazy singleton — allows test mocking via __setGatewayForTesting
@@ -24,7 +28,9 @@ function getGateway(): InstanceType<typeof TransbankGateway> {
  * Test-only: inject a mock gateway. Resets after each test.
  * @internal — blocked in production to prevent gateway hijacking
  */
-export async function __setGatewayForTesting(mock: InstanceType<typeof TransbankGateway>): Promise<void> {
+export async function __setGatewayForTesting(
+  mock: InstanceType<typeof TransbankGateway>,
+): Promise<void> {
   if (process.env.NODE_ENV === "production") {
     throw new Error("__setGatewayForTesting is not allowed in production");
   }
@@ -61,7 +67,10 @@ async function logAuditEvent(
     });
   } catch (err) {
     // Audit log failure must NOT break the transaction flow
-    logger.warn({ err, transactionId, buyOrder, event, tag: "audit_log_failed" }, "[Webpay] Failed to write audit log");
+    logger.warn(
+      { err, transactionId, buyOrder, event, tag: "audit_log_failed" },
+      "[Webpay] Failed to write audit log",
+    );
   }
 }
 
@@ -77,7 +86,70 @@ async function reverseTransaction(
 ): Promise<void> {
   transaction.markAsReversed();
   await transactionRepository.save(transaction);
-  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "REVERSED", auditDetails);
+  await logAuditEvent(
+    transaction.props.id,
+    transaction.props.buyOrder,
+    "REVERSED",
+    auditDetails,
+  );
+}
+
+/** Form timeout: 5 min production / 10 min integration. */
+function getFormTimeoutMs(): number {
+  return env.WEBPAY_ENVIRONMENT === "integration"
+    ? 10 * 60 * 1000
+    : 5 * 60 * 1000;
+}
+
+class TransbankResponseMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TransbankResponseMismatchError";
+  }
+}
+
+/** Reconcile Transbank commit/status payload against persisted transaction before mutating state. */
+function assertTransbankResponseMatches(
+  transaction: WebpayTransaction,
+  response: WebpayCommitResponse,
+): void {
+  if (response.buy_order !== transaction.props.buyOrder) {
+    throw new TransbankResponseMismatchError(
+      `buy_order mismatch: expected ${transaction.props.buyOrder}, got ${response.buy_order}`,
+    );
+  }
+  if (response.amount !== transaction.props.amount) {
+    throw new TransbankResponseMismatchError(
+      `amount mismatch: expected ${transaction.props.amount}, got ${response.amount}`,
+    );
+  }
+}
+
+function applyCommitResponse(
+  transaction: WebpayTransaction,
+  response: WebpayCommitResponse,
+): void {
+  assertTransbankResponseMatches(transaction, response);
+
+  if (response.status === "AUTHORIZED" && response.response_code === 0) {
+    transaction.markAsAuthorized({
+      authorizationCode: response.authorization_code,
+      paymentTypeCode: response.payment_type_code,
+      installmentsNumber: response.installments_number,
+      installmentsAmount: response.installments_amount ?? undefined,
+      responseCode: response.response_code,
+      vci: response.vci ?? undefined,
+      cardNumber:
+        response.card_detail?.card_number &&
+        response.card_detail.card_number.length >= 4
+          ? response.card_detail.card_number.slice(-4)
+          : undefined,
+      accountingDate: response.accounting_date ?? undefined,
+      transactionDate: response.transaction_date,
+    });
+  } else {
+    transaction.markAsRejected(response.response_code);
+  }
 }
 
 // ─── Helper: safe buy_order generation ────────────────────────────────────────
@@ -119,27 +191,43 @@ export interface TransbankRedirectData {
   token: string;
 }
 
-export async function initiateTransactionAction(amount: number, idempotencyKey?: string): Promise<TransbankRedirectData> {
-    if (amount <= 0) throw new Error("Invalid amount: must be greater than zero.");
+export async function initiateTransactionAction(
+  amount: number,
+  idempotencyKey?: string,
+): Promise<TransbankRedirectData> {
+  if (amount <= 0)
+    throw new Error("Invalid amount: must be greater than zero.");
 
   // Idempotency: when a key is provided, use it directly as the buyOrder
   // so subsequent calls with the same key find the existing transaction.
   let buyOrder: string;
 
   if (idempotencyKey) {
-    if (idempotencyKey.length > 26 || !/^[A-Za-z0-9_-]+$/.test(idempotencyKey)) {
-      throw new Error("Invalid idempotencyKey: max 26 alphanumeric characters.");
+    if (!isValidTransbankBuyOrder(idempotencyKey)) {
+      throw new Error(
+        "Invalid idempotencyKey: max 26 chars, Transbank buy_order charset required.",
+      );
     }
     buyOrder = idempotencyKey;
 
     const existing = await transactionRepository.findByBuyOrder(idempotencyKey);
     if (existing) {
-      if (existing.props.status === "INITIALIZED" && existing.props.token && existing.props.paymentUrl) {
+      if (
+        existing.props.status === "INITIALIZED" &&
+        existing.props.token &&
+        existing.props.paymentUrl
+      ) {
         // Re-use existing transaction — return redirect data for POST form
-        await logAuditEvent(existing.props.id, buyOrder, "INITIALIZED", { idempotent: true });
+        await logAuditEvent(existing.props.id, buyOrder, "INITIALIZED", {
+          idempotent: true,
+        });
         return { url: existing.props.paymentUrl, token: existing.props.token };
       }
-      if (existing.props.status === "INITIALIZED" && existing.props.token && !existing.props.paymentUrl) {
+      if (
+        existing.props.status === "INITIALIZED" &&
+        existing.props.token &&
+        !existing.props.paymentUrl
+      ) {
         // Token exists but paymentUrl missing (Transbank returned empty URL) — not redirectable
         throw new Error("Transaction in progress, try again in a few seconds.");
       }
@@ -157,7 +245,11 @@ export async function initiateTransactionAction(amount: number, idempotencyKey?:
     buyOrder = generateBuyOrder();
   }
 
-  const transaction = WebpayTransaction.initialize(buyOrder, crypto.randomUUID(), amount);
+  const transaction = WebpayTransaction.initialize(
+    buyOrder,
+    crypto.randomUUID(),
+    amount,
+  );
 
   // Persist BEFORE touching external network.
   // Catch P2002 (unique constraint) for race condition: two parallel calls
@@ -167,14 +259,26 @@ export async function initiateTransactionAction(amount: number, idempotencyKey?:
     await transactionRepository.save(transaction);
   } catch (err) {
     // Prisma v7: error code is in err.code, NOT in err.message
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
       // Race condition: another request created the transaction first.
       // Re-read and apply idempotency logic.
       const raceExisting = await transactionRepository.findByBuyOrder(buyOrder);
       if (raceExisting) {
-        if (raceExisting.props.status === "INITIALIZED" && raceExisting.props.token && raceExisting.props.paymentUrl) {
-          await logAuditEvent(raceExisting.props.id, buyOrder, "INITIALIZED", { idempotent: true });
-          return { url: raceExisting.props.paymentUrl, token: raceExisting.props.token };
+        if (
+          raceExisting.props.status === "INITIALIZED" &&
+          raceExisting.props.token &&
+          raceExisting.props.paymentUrl
+        ) {
+          await logAuditEvent(raceExisting.props.id, buyOrder, "INITIALIZED", {
+            idempotent: true,
+          });
+          return {
+            url: raceExisting.props.paymentUrl,
+            token: raceExisting.props.token,
+          };
         }
         // Terminal states (except FAILED) — cannot retry
         if (raceExisting.isTerminal && raceExisting.props.status !== "FAILED") {
@@ -187,7 +291,12 @@ export async function initiateTransactionAction(amount: number, idempotencyKey?:
     throw err;
   }
 
-  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "INITIALIZED", { amount });
+  await logAuditEvent(
+    transaction.props.id,
+    transaction.props.buyOrder,
+    "INITIALIZED",
+    { amount },
+  );
 
   const returnUrl = `${env.NEXT_PUBLIC_APP_URL}/api/webpay/return`;
 
@@ -211,7 +320,12 @@ export async function initiateTransactionAction(amount: number, idempotencyKey?:
   } catch (err) {
     transaction.markAsFailed();
     await transactionRepository.save(transaction);
-    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: String(err) });
+    await logAuditEvent(
+      transaction.props.id,
+      transaction.props.buyOrder,
+      "MARKED_FAILED",
+      { reason: String(err) },
+    );
     throw new Error("Error initiating payment. Try again later.");
   }
 
@@ -244,68 +358,54 @@ export async function confirmTransactionAction(token: string) {
     return transaction.props;
   }
 
-  // Token expiration: if Transbank token expired (> 5 min), don't attempt commit.
-  // Transbank would return an error anyway, but we mark FAILED with observability
-  // instead of making an unnecessary network call.
-  if (transaction.isTokenExpired) {
+  // Token expiration: form timeout varies by environment (10 min integration, 5 min production).
+  const formTimeoutMs = getFormTimeoutMs();
+  if (transaction.isTokenExpiredAt(formTimeoutMs)) {
     logger.warn(
-      { token, buyOrder: transaction.props.buyOrder, createdAt: transaction.props.createdAt },
-      "[Webpay] Token expired (>5min), marking as FAILED without calling Transbank",
+      {
+        token,
+        buyOrder: transaction.props.buyOrder,
+        createdAt: transaction.props.createdAt,
+        formTimeoutMs,
+      },
+      "[Webpay] Token expired, marking as FAILED without calling Transbank",
     );
     transaction.markAsFailed();
     await transactionRepository.save(transaction);
-    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", {
-      reason: "token_expired",
-    });
+    await logAuditEvent(
+      transaction.props.id,
+      transaction.props.buyOrder,
+      "MARKED_FAILED",
+      {
+        reason: "token_expired",
+      },
+    );
     return transaction.props;
   }
 
   try {
     const response = await getGateway().commitTransaction(token);
-
-    if (response.status === "AUTHORIZED" && response.response_code === 0) {
-      transaction.markAsAuthorized({
-        authorizationCode: response.authorization_code,
-        paymentTypeCode: response.payment_type_code,
-        installmentsNumber: response.installments_number,
-        installmentsAmount: response.installments_amount ?? undefined,
-        responseCode: response.response_code,
-        // Audit trail — Transbank data for reconciliation
-        vci: response.vci ?? undefined,
-        cardNumber: response.card_detail?.card_number && response.card_detail.card_number.length >= 4 ? response.card_detail.card_number.slice(-4) : undefined,
-        accountingDate: response.accounting_date ?? undefined,
-        transactionDate: response.transaction_date,
-      });
-    } else {
-      transaction.markAsRejected(response.response_code);
-    }
+    applyCommitResponse(transaction, response);
   } catch (error) {
-    if (error instanceof TransbankAlreadyProcessedError) {
+    if (error instanceof TransbankResponseMismatchError) {
+      logger.error(
+        { err: error, token, buyOrder: transaction.props.buyOrder },
+        "[Webpay] Transbank response reconciliation failed",
+      );
+      transaction.markAsFailed();
+    } else if (error instanceof TransbankAlreadyProcessedError) {
       // User reloaded the success page or there was a double submit.
       // 422 does NOT mean FAILED — it means "already processed before".
       // We query the real status to recover what happened.
       try {
         const status = await getGateway().getTransactionStatus(token);
-
-        if (status.status === "AUTHORIZED" && status.response_code === 0) {
-          transaction.markAsAuthorized({
-            authorizationCode: status.authorization_code,
-            paymentTypeCode: status.payment_type_code,
-            installmentsNumber: status.installments_number,
-            installmentsAmount: status.installments_amount ?? undefined,
-            responseCode: status.response_code,
-            // Audit trail — Transbank data for reconciliation
-            vci: status.vci ?? undefined,
-            cardNumber: status.card_detail?.card_number && status.card_detail.card_number.length >= 4 ? status.card_detail.card_number.slice(-4) : undefined,
-            accountingDate: status.accounting_date ?? undefined,
-            transactionDate: status.transaction_date,
-          });
-        } else {
-          transaction.markAsRejected(status.response_code);
-        }
+        applyCommitResponse(transaction, status);
       } catch (statusError) {
         // getTransactionStatus also failed — mark as FAILED with observability
-        logger.error({ err: statusError, token }, "[Webpay] Fallback getTransactionStatus failed after 422");
+        logger.error(
+          { err: statusError, token },
+          "[Webpay] Fallback getTransactionStatus failed after 422",
+        );
         transaction.markAsFailed();
       }
     } else {
@@ -319,16 +419,30 @@ export async function confirmTransactionAction(token: string) {
   // Audit log after state transition
   const newStatus = transaction.props.status;
   if (newStatus === "AUTHORIZED") {
-    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "AUTHORIZED", {
-      authorizationCode: transaction.props.authCode,
-      responseCode: transaction.props.responseCode,
-    });
+    await logAuditEvent(
+      transaction.props.id,
+      transaction.props.buyOrder,
+      "AUTHORIZED",
+      {
+        authorizationCode: transaction.props.authCode,
+        responseCode: transaction.props.responseCode,
+      },
+    );
   } else if (newStatus === "REJECTED") {
-    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "REJECTED", {
-      responseCode: transaction.props.responseCode,
-    });
+    await logAuditEvent(
+      transaction.props.id,
+      transaction.props.buyOrder,
+      "REJECTED",
+      {
+        responseCode: transaction.props.responseCode,
+      },
+    );
   } else if (newStatus === "FAILED") {
-    await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED");
+    await logAuditEvent(
+      transaction.props.id,
+      transaction.props.buyOrder,
+      "MARKED_FAILED",
+    );
   }
 
   return transaction.props;
@@ -337,33 +451,51 @@ export async function confirmTransactionAction(token: string) {
 // ─── Use Case 3: Abort via TBK_TOKEN ──────────────────────────────────────
 
 /**
- * Handles when the user clicks "Abort" on the Transbank gateway.
+ * Handles when the user cancels or times out on the Transbank gateway.
  *
- * Transbank sends TBK_TOKEN + TBK_ORDEN_COMPRA + TBK_ID_SESION.
- * We use buyOrder to find the transaction in our DB
- * (TBK_TOKEN is not the payment token, it's an abandonment identifier).
+ * Transbank sends TBK_ORDEN_COMPRA in both cases. User cancel also includes TBK_TOKEN.
+ * Timeout (form expired) sends only TBK_ORDEN_COMPRA + TBK_ID_SESION — no token.
+ *
+ * @param buyOrder - TBK_ORDEN_COMPRA from Transbank return payload
+ * @param tbkToken - TBK_TOKEN when the user clicked "Anular" (optional for timeout)
  */
-export async function abortTransactionAction(tbkToken: string, buyOrder?: string): Promise<void> {
-  // Transbank sends buyOrder for both cancellations and timeouts.
-  // We find and mark ABORTED immediately to not depend on the Worker.
-  // If we don't find the transaction, we log for traceability — not a fatal error.
+export async function abortTransactionAction(
+  buyOrder: string,
+  tbkToken?: string,
+): Promise<void> {
   if (!buyOrder) {
-    logger.warn({ tbkToken }, "[Webpay] abortTransactionAction: buyOrder not provided by Transbank");
+    logger.warn(
+      { tbkToken },
+      "[Webpay] abortTransactionAction: buyOrder not provided by Transbank",
+    );
     return;
   }
   const transaction = await transactionRepository.findByBuyOrder(buyOrder);
 
   if (!transaction) {
-    logger.warn({ buyOrder, tbkToken }, "[Webpay] abortTransactionAction: buyOrder not found");
+    logger.warn(
+      { buyOrder, tbkToken },
+      "[Webpay] abortTransactionAction: buyOrder not found",
+    );
     return;
   }
 
   // Only valid transitions from INITIALIZED — if already in terminal state, don't touch anything.
   if (transaction.isTerminal) return;
 
-  transaction.markAsAbortedByClient(`TBK_TOKEN:${tbkToken.slice(0, 20)}`);
+  const reason = tbkToken ? `TBK_TOKEN:${tbkToken.slice(0, 20)}` : "timeout";
+  transaction.markAsAbortedByClient(reason);
   await transactionRepository.save(transaction);
-  await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "ABORTED", { tbkToken: tbkToken.slice(0, 20) });
+  await logAuditEvent(
+    transaction.props.id,
+    transaction.props.buyOrder,
+    "ABORTED",
+    {
+      ...(tbkToken
+        ? { tbkToken: tbkToken.slice(0, 20) }
+        : { reason: "timeout" }),
+    },
+  );
 }
 
 // ─── Use Case 4: Worker Polling ─────────────────────────────────────────
@@ -397,7 +529,12 @@ export async function pollStaleTransactionsAction(): Promise<{
       // No token means never redirected to bank → technical error during creation
       transaction.markAsFailed();
       await transactionRepository.save(transaction);
-      await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "no_token" });
+      await logAuditEvent(
+        transaction.props.id,
+        transaction.props.buyOrder,
+        "MARKED_FAILED",
+        { reason: "no_token" },
+      );
       failed++;
       continue;
     }
@@ -415,28 +552,27 @@ export async function pollStaleTransactionsAction(): Promise<{
       }
 
       if (status.status === "AUTHORIZED" && status.response_code === 0) {
-        transaction.markAsAuthorized({
-          authorizationCode: status.authorization_code,
-          paymentTypeCode: status.payment_type_code,
-          installmentsNumber: status.installments_number,
-          installmentsAmount: status.installments_amount ?? undefined,
-          responseCode: status.response_code,
-          // Audit trail — Transbank data for reconciliation
-          vci: status.vci ?? undefined,
-          cardNumber: status.card_detail?.card_number && status.card_detail.card_number.length >= 4 ? status.card_detail.card_number.slice(-4) : undefined,
-          accountingDate: status.accounting_date ?? undefined,
-          transactionDate: status.transaction_date,
-        });
-        await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "AUTHORIZED", {
-          authorizationCode: status.authorization_code,
-          responseCode: status.response_code,
-        });
+        applyCommitResponse(transaction, status);
+        await logAuditEvent(
+          transaction.props.id,
+          transaction.props.buyOrder,
+          "AUTHORIZED",
+          {
+            authorizationCode: status.authorization_code,
+            responseCode: status.response_code,
+          },
+        );
         authorized++;
       } else if (status.response_code !== undefined) {
-        transaction.markAsRejected(status.response_code);
-        await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "REJECTED", {
-          responseCode: status.response_code,
-        });
+        applyCommitResponse(transaction, status);
+        await logAuditEvent(
+          transaction.props.id,
+          transaction.props.buyOrder,
+          "REJECTED",
+          {
+            responseCode: status.response_code,
+          },
+        );
         rejected++;
       } else {
         // Ambiguous state — leave for next cycle
@@ -455,14 +591,39 @@ export async function pollStaleTransactionsAction(): Promise<{
       }
 
       await transactionRepository.save(transaction);
-    } catch {
+    } catch (error) {
+      if (error instanceof TransbankResponseMismatchError) {
+        logger.error(
+          { err: error, token, buyOrder: transaction.props.buyOrder },
+          "[Webpay] Poll reconciliation failed",
+        );
+        transaction.markAsFailed();
+        await transactionRepository.save(transaction);
+        await logAuditEvent(
+          transaction.props.id,
+          transaction.props.buyOrder,
+          "MARKED_FAILED",
+          {
+            reason: "reconciliation_mismatch",
+          },
+        );
+        failed++;
+        continue;
+      }
+
       // Transbank couldn't respond — is it older than 7 days? → will never resolve
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      const referenceDate = transaction.props.transactionDate ?? transaction.props.createdAt;
+      const referenceDate =
+        transaction.props.transactionDate ?? transaction.props.createdAt;
       if (referenceDate < sevenDaysAgo) {
         transaction.markAsFailed();
         await transactionRepository.save(transaction);
-        await logAuditEvent(transaction.props.id, transaction.props.buyOrder, "MARKED_FAILED", { reason: "stale_7d" });
+        await logAuditEvent(
+          transaction.props.id,
+          transaction.props.buyOrder,
+          "MARKED_FAILED",
+          { reason: "stale_7d" },
+        );
         failed++;
       }
       // Otherwise, leave for next cron cycle — polledAt is NOT modified
@@ -483,8 +644,7 @@ export async function pollStaleTransactionsAction(): Promise<{
  *
  * Flow (do NOT change this order):
  * 1. Find transaction in DB
- * 2. Domain guard: only AUTHORIZED can be reversed
- * 3. Idempotency: if already REVERSED or terminal, return without calling Transbank
+ * 3. Idempotency: if already REVERSED, return without calling Transbank
  * 4. Persist current state BEFORE calling Transbank (checkpoint)
  * 5. Call Transbank → refund
  * 6. On success: mark REVERSED, save, audit log
@@ -509,13 +669,10 @@ export async function refundTransactionAction(
     throw new Error("Transaction not found for the provided token.");
   }
 
-  // 2. Domain guard: only AUTHORIZED can be reversed
   if (transaction.props.status !== "AUTHORIZED") {
-    // 3. Idempotency: if already refunded or terminal, return without calling Transbank
-    if (transaction.props.status === "REVERSED" || transaction.props.status === "FAILED") {
+    if (transaction.props.status === "REVERSED") {
       return transaction.props;
     }
-    // Other states (INITIALIZED, REJECTED, ABORTED) — refund does not apply
     throw new Error(
       `Only AUTHORIZED transactions can be reversed. Current status: ${transaction.props.status}`,
     );

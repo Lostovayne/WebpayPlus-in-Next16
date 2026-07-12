@@ -5,46 +5,61 @@ import {
 import logger from "@/shared/lib/logger";
 import { NextRequest, NextResponse } from "next/server";
 
+type ReturnParams = {
+  tokenWs: string | null;
+  tbkToken: string | null;
+  buyOrder: string | null;
+};
+
+function parseReturnParams(searchParams: URLSearchParams): ReturnParams {
+  return {
+    tokenWs: searchParams.get("token_ws"),
+    tbkToken: searchParams.get("TBK_TOKEN"),
+    buyOrder: searchParams.get("TBK_ORDEN_COMPRA"),
+  };
+}
+
 /**
- * POST /api/webpay/return
- *
- * Transbank hace POST aquí cuando el usuario termina en la pasarela.
- * El body es application/x-www-form-urlencoded, NO JSON.
- *
- * Hay 2 escenarios posibles en el POST:
- *
- * 1. PAGO COMPLETADO (exitoso o rechazado por el banco):
- *    Body: token_ws=<token>
- *    → Hacer commit y redirigir según resultado.
- *
- * 2. USUARIO CANCELÓ en la pasarela (presionó "Anular"):
- *    Body: TBK_TOKEN=<tbk_token>&TBK_ORDEN_COMPRA=<buy_order>&TBK_ID_SESION=<session>
- *    → Marcar como ABORTED y redirigir a error.
- *    Nota: En este caso NO viene token_ws — es un error común confundirlo.
+ * Transbank return flows (API v1.2):
+ * 1. Normal: token_ws only → commit
+ * 2. Timeout: TBK_ORDEN_COMPRA + TBK_ID_SESION only (no token)
+ * 3. User abort: TBK_TOKEN + TBK_ORDEN_COMPRA + TBK_ID_SESION
+ * 4. Error edge case: both token_ws and TBK_TOKEN — treat as abort (TBK_TOKEN wins)
  */
-export async function POST(req: NextRequest) {
-  const text = await req.text();
-  const params = new URLSearchParams(text);
+async function handleReturn(
+  req: NextRequest,
+  params: ReturnParams,
+  invalidPayloadReason: string,
+): Promise<NextResponse> {
+  const { tokenWs, tbkToken, buyOrder } = params;
 
-  const tbkToken = params.get("TBK_TOKEN");
-  const buyOrder = params.get("TBK_ORDEN_COMPRA");
-
-  // Escenario 2: Cancelación del usuario
   if (tbkToken) {
-    await abortTransactionAction(tbkToken, buyOrder ?? "unknown");
-    return NextResponse.redirect(new URL("/checkout/error?reason=aborted_by_user", req.url), 303);
+    if (buyOrder) {
+      await abortTransactionAction(buyOrder, tbkToken);
+    }
+    return NextResponse.redirect(
+      new URL("/checkout/error?reason=aborted_by_user", req.url),
+      303,
+    );
   }
 
-  // Escenario 1: Flujo normal (pago completado o rechazado por el banco)
-  const token = params.get("token_ws");
-  if (!token) {
-    // Payload vacío o manipulado — no deberíamos llegar aquí en condiciones normales
-    logger.error({ payload: text }, "[Webpay POST] Payload sin token_ws ni TBK_TOKEN");
-    return NextResponse.redirect(new URL("/checkout/error?reason=invalid_payload", req.url), 303);
+  if (buyOrder && !tokenWs) {
+    await abortTransactionAction(buyOrder);
+    return NextResponse.redirect(
+      new URL("/checkout/error?reason=timeout", req.url),
+      303,
+    );
+  }
+
+  if (!tokenWs) {
+    return NextResponse.redirect(
+      new URL(`/checkout/error?reason=${invalidPayloadReason}`, req.url),
+      303,
+    );
   }
 
   try {
-    const transaction = await confirmTransactionAction(token);
+    const transaction = await confirmTransactionAction(tokenWs);
 
     if (transaction.status === "AUTHORIZED") {
       return NextResponse.redirect(
@@ -58,58 +73,43 @@ export async function POST(req: NextRequest) {
       303,
     );
   } catch (error) {
-    logger.error({ err: error }, "[Webpay POST] Error en confirmación");
-    return NextResponse.redirect(new URL("/checkout/error?reason=system_failed", req.url), 303);
+    logger.error({ err: error }, "[Webpay] Error en confirmación");
+    return NextResponse.redirect(
+      new URL("/checkout/error?reason=system_failed", req.url),
+      303,
+    );
   }
+}
+
+/**
+ * POST /api/webpay/return
+ *
+ * Transbank POST here when the user finishes on the gateway (integration abort flow).
+ * Body is application/x-www-form-urlencoded, NOT JSON.
+ */
+export async function POST(req: NextRequest) {
+  const text = await req.text();
+  const params = parseReturnParams(new URLSearchParams(text));
+
+  if (!params.tokenWs && !params.tbkToken && !params.buyOrder) {
+    logger.error(
+      { payload: text },
+      "[Webpay POST] Payload missing token_ws and TBK_TOKEN",
+    );
+  }
+
+  return handleReturn(req, params, "invalid_payload");
 }
 
 /**
  * GET /api/webpay/return
  *
- * Transbank usa GET en 2 escenarios:
- *
- * 1. TIMEOUT (5 minutos sin que el usuario pagara):
- *    Query: ?TBK_TOKEN=xxx&TBK_ORDEN_COMPRA=yyy&TBK_ID_SESION=zzz
- *    → El usuario tardó demasiado. La sesión de pago expiró.
- *
- * 2. USUARIO RECARGÓ la página de retorno después de un pago exitoso:
- *    Query: ?token_ws=xxx
- *    → El use case maneja esto con idempotencia (ya está en estado terminal).
+ * Transbank GET here on normal return (API v1.1+) and production abort/timeout flows.
  */
 export async function GET(req: NextRequest) {
-  const { searchParams } = req.nextUrl;
-
-  const tbkToken = searchParams.get("TBK_TOKEN");
-  const buyOrder = searchParams.get("TBK_ORDEN_COMPRA");
-
-  // Escenario 1: Timeout — el usuario no pagó a tiempo
-  if (tbkToken) {
-    await abortTransactionAction(tbkToken, buyOrder ?? "unknown");
-    return NextResponse.redirect(new URL("/checkout/error?reason=timeout", req.url), 303);
-  }
-
-  // Escenario 2: Recarga de página de éxito (o flujo directo)
-  const token = searchParams.get("token_ws");
-  if (!token) {
-    return NextResponse.redirect(new URL("/checkout/error?reason=no_token", req.url), 303);
-  }
-
-  try {
-    const transaction = await confirmTransactionAction(token);
-
-    if (transaction.status === "AUTHORIZED") {
-      return NextResponse.redirect(
-        new URL(`/checkout/success?buyOrder=${transaction.buyOrder}`, req.url),
-        303,
-      );
-    }
-
-    return NextResponse.redirect(
-      new URL(`/checkout/error?reason=${transaction.status}`, req.url),
-      303,
-    );
-  } catch (error) {
-    logger.error({ err: error }, "[Webpay GET] Error en confirmación");
-    return NextResponse.redirect(new URL("/checkout/error?reason=system_failed", req.url), 303);
-  }
+  return handleReturn(
+    req,
+    parseReturnParams(req.nextUrl.searchParams),
+    "no_token",
+  );
 }

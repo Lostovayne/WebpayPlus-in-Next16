@@ -1,13 +1,3 @@
-/**
- * Estados posibles de una transacción Webpay Plus.
- *
- * INITIALIZED  → Se creó y se redirigió al banco. Esperando retorno.
- * AUTHORIZED   → Transbank aprobó el cobro. Estado final positivo.
- * REJECTED     → Transbank rechazó el cobro (fondos insuficientes, etc).
- * ABORTED      → El usuario canceló manualmente en la pasarela (TBK_TOKEN).
- * FAILED       → Error técnico de nuestro sistema (no del banco).
- * REVERSED     → Fue revertido/anulado via Refund API después de autorizado.
- */
 export type TransactionStatus =
   | "INITIALIZED"
   | "AUTHORIZED"
@@ -15,6 +5,18 @@ export type TransactionStatus =
   | "ABORTED"
   | "FAILED"
   | "REVERSED";
+
+/** Max length and charset per Transbank Webpay Plus REST API docs. */
+export const TRANSBANK_BUY_ORDER_MAX_LENGTH = 26;
+export const TRANSBANK_BUY_ORDER_PATTERN = /^[A-Za-z0-9|_=&%.,~:/?[+!@()>-]+$/;
+
+export function isValidTransbankBuyOrder(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= TRANSBANK_BUY_ORDER_MAX_LENGTH &&
+    TRANSBANK_BUY_ORDER_PATTERN.test(value)
+  );
+}
 
 export interface WebpayTransactionProps {
   id: string;
@@ -28,59 +30,62 @@ export interface WebpayTransactionProps {
   installmentsAmount?: number;
   installmentsNumber?: number;
   responseCode?: number;
-  // Audit trail — datos que Transbank retorna pero que antes se descartaban
-  vci?: string;            // Verification Code Identifier — tipo de validación del pago
-  cardNumber?: string;     // Últimos 4 dígitos de la tarjeta (para auditoría)
-  accountingDate?: string; // Fecha contable "MMDD" de Transbank
-  transactionDate?: Date;  // Fecha/hora real de la transacción
+  vci?: string;
+  cardNumber?: string;
+  accountingDate?: string;
+  transactionDate?: Date;
   abortedReason?: string;
   polledAt?: Date;
-  paymentUrl?: string; // URL del formulario de Transbank — necesaria para redirect de idempotencia
+  paymentUrl?: string;
   createdAt: Date;
 }
 
-/** Respuesta del commit/status de Transbank que el dominio necesita conocer. */
 export interface WebpayCommitData {
   authorizationCode: string;
   paymentTypeCode: string;
   installmentsNumber: number;
-  installmentsAmount?: number; // Puede no venir en transacciones de débito
+  installmentsAmount?: number;
   responseCode: number;
-  // Audit trail — datos completos de Transbank para reconciliation
   vci: string;
-  cardNumber?: string;       // Últimos 4 dígitos (puede no venir en algunos estados)
-  accountingDate: string;    // "MMDD"
-  transactionDate: string;   // ISO date string de Transbank
+  cardNumber?: string;
+  accountingDate: string;
+  transactionDate: string;
 }
 
 /**
- * Entidad de Dominio: Transacción Webpay.
+ * Webpay transaction entity.
  *
- * Máquina de estados explícita. Ninguna transición ilegal es posible.
- * La infraestructura (Prisma, HTTP) es un detalle de implementación ajeno a esta clase.
+ * Explicit state machine. No illegal transitions are possible.
+ * Infrastructure (Prisma, HTTP) is an implementation detail external to this class.
  */
 export class WebpayTransaction {
   constructor(public readonly props: WebpayTransactionProps) {}
 
   // ─── Factory Method ───────────────────────────────────────────────────────
 
-  /** Token TTL de Transbank: 5 minutos desde la creación. */
+  /** Transbank token TTL: 5 minutes from creation. */
   static readonly TOKEN_TTL_MS = 5 * 60 * 1000;
 
-  public static initialize(buyOrder: string, sessionId: string, amount: number): WebpayTransaction {
+  public static initialize(
+    buyOrder: string,
+    sessionId: string,
+    amount: number,
+  ): WebpayTransaction {
     if (amount <= 0) {
-      throw new Error("Monto de transacción inválido: debe ser mayor a cero.");
+      throw new Error("Transaction amount must be greater than zero.");
     }
-    // Transbank Plus: límite máximo documentado para transacciones en CLP.
     if (amount > 999_999_999) {
-      throw new Error("Monto de transacción inválido: supera el máximo de $999.999.999 CLP permitido por Transbank.");
+      throw new Error(
+        "Transaction amount exceeds Transbank CLP limit of $999,999,999.",
+      );
     }
-    if (buyOrder.length > 26) {
-      throw new Error("buy_order supera los 26 caracteres permitidos por Transbank.");
+    if (!isValidTransbankBuyOrder(buyOrder)) {
+      throw new Error(
+        "buy_order is invalid or exceeds Transbank limits (max 26 chars, allowed charset).",
+      );
     }
-    // session_id: Transbank limita a 61 caracteres (UUID v4 = 36, v7 = 36, OK)
     if (sessionId.length > 61) {
-      throw new Error("session_id supera los 61 caracteres permitidos por Transbank.");
+      throw new Error("session_id exceeds Transbank limit of 61 characters.");
     }
 
     return new WebpayTransaction({
@@ -93,7 +98,7 @@ export class WebpayTransaction {
     });
   }
 
-  // ─── Transiciones de Estado ───────────────────────────────────────────────
+  // ─── State Transitions ──────────────────────────────────────────────────
 
   public setToken(token: string): void {
     this.assertStatus("INITIALIZED", "setToken");
@@ -102,31 +107,31 @@ export class WebpayTransaction {
 
   public setPaymentUrl(url: string): void {
     this.assertStatus("INITIALIZED", "setPaymentUrl");
-    if (!url) throw new Error("[Domain] paymentUrl no puede estar vacío.");
+    if (!url) throw new Error("[Domain] paymentUrl cannot be empty.");
     this.props.paymentUrl = url;
   }
 
   public markAsAuthorized(data: WebpayCommitData): void {
     this.assertStatus("INITIALIZED", "markAsAuthorized");
 
-    // Validar ANTES de mutar el estado — si algo falla, la transacción queda en INITIALIZED
     if (data.cardNumber !== undefined && data.cardNumber.length > 4) {
-      throw new Error(`[Domain] cardNumber debe ser máximo 4 dígitos (PCI DSS). Recibido: ${data.cardNumber.length} caracteres.`);
+      throw new Error(
+        `[Domain] cardNumber must be at most 4 digits (PCI DSS). Received: ${data.cardNumber.length} characters.`,
+      );
     }
     const parsedDate = new Date(data.transactionDate);
-    if (isNaN(parsedDate.getTime())) {
-      throw new Error(`[Domain] transactionDate inválida de Transbank: "${data.transactionDate}". Auditar manualmente.`);
+    if (Number.isNaN(parsedDate.getTime())) {
+      throw new Error(
+        `[Domain] Invalid transactionDate from Transbank: "${data.transactionDate}". Manual audit required.`,
+      );
     }
 
-    // Validaciones pasan → ahora sí mutar el estado
     this.props.status = "AUTHORIZED";
     this.props.authCode = data.authorizationCode;
     this.props.paymentTypeCode = data.paymentTypeCode;
     this.props.installmentsNumber = data.installmentsNumber;
     this.props.installmentsAmount = data.installmentsAmount;
     this.props.responseCode = data.responseCode;
-    // Audit trail — campos de Transbank para reconciliation contable
-    // Normalizar empty strings a undefined para consistencia en BD
     this.props.vci = data.vci || undefined;
     this.props.accountingDate = data.accountingDate || undefined;
     this.props.cardNumber = data.cardNumber || undefined;
@@ -146,12 +151,9 @@ export class WebpayTransaction {
   }
 
   public markAsFailed(): void {
-    // CRÍTICO: Una transacción en estado terminal jamás se puede marcar como FAILED.
-    // Si Transbank ya cobró (AUTHORIZED), hacer un rollback sería un desastre contable.
-    // Si fue REJECTED/ABORTED/REVERSED, sobreescribir pierde información valiosa.
     if (this.props.status !== "INITIALIZED") {
       throw new Error(
-        `[Domain] No se puede marcar FAILED una transacción en estado "${this.props.status}" (${this.props.id}).`,
+        `[Domain] Cannot mark FAILED: transaction is in "${this.props.status}" state (${this.props.id}).`,
       );
     }
     this.props.status = "FAILED";
@@ -160,44 +162,41 @@ export class WebpayTransaction {
   public markAsReversed(): void {
     if (this.props.status !== "AUTHORIZED") {
       throw new Error(
-        `[Domain] Solo se puede revertir una transacción AUTHORIZED. Estado actual: ${this.props.status}`,
+        `[Domain] Only AUTHORIZED transactions can be reversed. Current status: ${this.props.status}`,
       );
     }
     this.props.status = "REVERSED";
   }
 
-  /** El Worker llama a esto para registrar cuándo auditó esta transacción. */
+  /** Called by the worker to record when this transaction was polled. */
   public markAsPolled(): void {
     this.props.polledAt = new Date();
   }
 
-  /**
-   * Indica si el token de Transbank ya expiró (> 5 min desde creación).
-   *
-   * Transbank asigna un TTL de 5 minutos al token. Si el usuario no completa
-   * el pago en ese plazo, el token caduca y el commit retornará error.
-   * Este método permite detectar el caso proactivamente antes de llamar a Transbank.
-   *
-   * Referencia: https://transbankdevelopers.cl/documentacion/webpay-plus
-   * "una vez invocado este método, el token que es entregado tiene un periodo
-   * reducido de vida de 5 minutos"
-   */
+  /** Whether the Transbank token has expired (5 min TTL from creation). */
   public get isTokenExpired(): boolean {
+    return this.isTokenExpiredAt(WebpayTransaction.TOKEN_TTL_MS);
+  }
+
+  /** Check expiry against a custom TTL (e.g. integration form timeout is 10 min). */
+  public isTokenExpiredAt(ttlMs: number): boolean {
     if (this.props.status !== "INITIALIZED") return false;
     const elapsed = Date.now() - this.props.createdAt.getTime();
-    return elapsed > WebpayTransaction.TOKEN_TTL_MS;
+    return elapsed > ttlMs;
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   public get isTerminal(): boolean {
-    return ["AUTHORIZED", "REJECTED", "ABORTED", "FAILED", "REVERSED"].includes(this.props.status);
+    return ["AUTHORIZED", "REJECTED", "ABORTED", "FAILED", "REVERSED"].includes(
+      this.props.status,
+    );
   }
 
   private assertStatus(expected: TransactionStatus, operation: string): void {
     if (this.props.status !== expected) {
       throw new Error(
-        `[Domain] Transición inválida: "${operation}" requiere estado "${expected}" pero el estado actual es "${this.props.status}" (id: ${this.props.id}).`,
+        `[Domain] Invalid transition: "${operation}" requires "${expected}" but current state is "${this.props.status}" (id: ${this.props.id}).`,
       );
     }
   }

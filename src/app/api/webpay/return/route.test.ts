@@ -200,6 +200,17 @@ describe("POST /api/webpay/return", () => {
       expect(response.headers.get("location")).toContain("reason=invalid_payload");
     });
 
+    it("redirects to timeout when only TBK_ORDEN_COMPRA is present (Transbank flow #2)", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      seed(tx);
+
+      const req = createPostRequest("TBK_ORDEN_COMPRA=BO123&TBK_ID_SESION=session-1");
+      const response = await POST(req);
+
+      expect(response.status).toBe(303);
+      expect(response.headers.get("location")).toContain("reason=timeout");
+    });
+
     it("redirects to error page when body is empty", async () => {
       const req = createPostRequest("");
       const response = await POST(req);
@@ -262,18 +273,46 @@ describe("POST /api/webpay/return", () => {
 });
 
 describe("GET /api/webpay/return", () => {
-  describe("Timeout (TBK_TOKEN in query)", () => {
+  describe("Timeout (TBK_ORDEN_COMPRA only — Transbank flow #2)", () => {
     it("redirects to error page with timeout reason", async () => {
       const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
       seed(tx);
 
       const req = createGetRequest(
-        "http://localhost:3000/api/webpay/return?TBK_TOKEN=tbk_timeout&TBK_ORDEN_COMPRA=BO123&TBK_ID_SESION=session-1",
+        "http://localhost:3000/api/webpay/return?TBK_ORDEN_COMPRA=BO123&TBK_ID_SESION=session-1",
       );
       const response = await GET(req);
 
       expect(response.status).toBe(303);
       expect(response.headers.get("location")).toContain("reason=timeout");
+    });
+
+    it("marks transaction as ABORTED", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      seed(tx);
+
+      const req = createGetRequest(
+        "http://localhost:3000/api/webpay/return?TBK_ORDEN_COMPRA=BO123&TBK_ID_SESION=session-1",
+      );
+      await GET(req);
+
+      const updated = mockRepoStore.get(tx.props.id);
+      expect(updated!.props.status).toBe("ABORTED");
+    });
+  });
+
+  describe("User abort (TBK_TOKEN in query)", () => {
+    it("redirects to error page with aborted_by_user reason", async () => {
+      const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
+      seed(tx);
+
+      const req = createGetRequest(
+        "http://localhost:3000/api/webpay/return?TBK_TOKEN=tbk_cancel&TBK_ORDEN_COMPRA=BO123&TBK_ID_SESION=session-1",
+      );
+      const response = await GET(req);
+
+      expect(response.status).toBe(303);
+      expect(response.headers.get("location")).toContain("reason=aborted_by_user");
     });
   });
 
