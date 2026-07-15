@@ -912,6 +912,58 @@ describe("pollStaleTransactionsAction", () => {
       // Return handler's auth code should be preserved, NOT poll worker's
       expect(updated!.props.authCode).toBe("AUTH-RACE");
     });
+    it("does NOT write audit log if return handler processes before save (phantom audit)", async () => {
+      // Scenario: poll worker reads stale INITIALIZED transaction, calls Transbank,
+      // but while waiting, the return handler processes the same transaction.
+      // The poll worker should NOT write an audit log if it skips the save.
+      const tx = WebpayTransaction.initialize(
+        "BO-RACE-AUDIT",
+        "session-1",
+        5000,
+      );
+      tx.setToken("tok_race_audit");
+      tx.props.createdAt = new Date(Date.now() - 15 * 60 * 1000);
+      seed(tx);
+
+      // Clear audit log mock
+      const auditLogMock = vi.mocked(prisma.transactionAuditLog.create);
+      auditLogMock.mockClear();
+
+      // Transbank says AUTHORIZED, but return handler already processed
+      mockGateway._getTransactionStatusMock.mockImplementationOnce(async () => {
+        // Simulate return handler processing while we wait
+        const stored = mockRepoStore.get(tx.props.id);
+        if (stored) {
+          stored.markAsAuthorized({
+            authorizationCode: "AUTH-RACE",
+            paymentTypeCode: "VD",
+            installmentsNumber: 1,
+            responseCode: 0,
+            transactionDate: "2026-01-01T00:00:00.000Z",
+          });
+        }
+        return {
+          vci: "TSO",
+          amount: 5000,
+          status: "AUTHORIZED",
+          buy_order: "BO-RACE-AUDIT",
+          session_id: "session-1",
+          accounting_date: "0101",
+          transaction_date: "2026-01-01T00:00:00.000Z",
+          authorization_code: "AUTH001",
+          payment_type_code: "VD",
+          response_code: 0,
+          installments_number: 1,
+        };
+      });
+
+      const result = await pollStaleTransactionsAction();
+
+      // Should have processed but NOT written audit log (save was skipped)
+      expect(result.processed).toBe(1);
+      expect(result.authorized).toBe(0);
+      expect(auditLogMock).not.toHaveBeenCalled(); // No phantom audit
+    });
   });
 });
 
@@ -1383,21 +1435,19 @@ describe("refundTransactionAction", () => {
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
     });
 
-    it("throws when transaction is FAILED (never authorized)", async () => {
+    it("returns current state without calling Transbank if already FAILED", async () => {
       const tx = WebpayTransaction.initialize(
-        "BO-REFUND-004",
+        "BO-REFUND-FAIL",
         "session-1",
         5000,
       );
-      tx.setToken("tok_refund_004");
+      tx.setToken("tok_refund_fail");
       tx.markAsFailed();
       seed(tx);
 
-      await expect(
-        refundTransactionAction("tok_refund_004", 5000),
-      ).rejects.toThrow(
-        "Only AUTHORIZED transactions can be reversed. Current status: FAILED",
-      );
+      const result = await refundTransactionAction("tok_refund_fail", 5000);
+
+      expect(result.status).toBe("FAILED");
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
     });
   });
@@ -1671,6 +1721,82 @@ describe("refundTransactionAction", () => {
         refundTransactionAction("tok_nonexistent", 5000),
       ).rejects.toThrow("Transaction not found");
       expect(mockGateway.requestRefund).not.toHaveBeenCalled();
+    });
+  });
+  describe("Persist-before-network (issue #29)", () => {
+    it("saves checkpoint to DB BEFORE calling Transbank requestRefund", async () => {
+      const tx = WebpayTransaction.initialize(
+        "BO-PERSIST-001",
+        "session-1",
+        5000,
+      );
+      tx.setToken("tok_persist_001");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      // Track call order: save vs requestRefund
+      const callOrder: string[] = [];
+      const originalSave = transactionRepository.save;
+      transactionRepository.save = async (txArg: WebpayTransaction) => {
+        callOrder.push("save");
+        return originalSave(txArg);
+      };
+      mockGateway.requestRefund.mockImplementation(async () => {
+        callOrder.push("requestRefund");
+        return {
+          type: "REVERSED",
+          authorization_code: "AUTH-REFUND-001",
+          authorization_date: "2026-01-01T00:00:00.000Z",
+          nullified_amount: 5000,
+          balance: 0,
+          response_code: 0,
+        };
+      });
+
+      await refundTransactionAction("tok_persist_001", 5000);
+
+      // save MUST be called before requestRefund (first two calls)
+      expect(callOrder[0]).toBe("save");
+      expect(callOrder[1]).toBe("requestRefund");
+
+      // Restore
+      transactionRepository.save = originalSave;
+    });
+
+    it("does NOT call Transbank if checkpoint save fails", async () => {
+      const tx = WebpayTransaction.initialize(
+        "BO-PERSIST-002",
+        "session-1",
+        5000,
+      );
+      tx.setToken("tok_persist_002");
+      tx.markAsAuthorized({
+        authorizationCode: "AUTH001",
+        paymentTypeCode: "VD",
+        installmentsNumber: 1,
+        responseCode: 0,
+        transactionDate: "2026-01-01T00:00:00.000Z",
+      });
+      seed(tx);
+
+      // Make save fail
+      const originalSave = transactionRepository.save;
+      transactionRepository.save = async () => {
+        throw new Error("DB connection lost");
+      };
+
+      await refundTransactionAction("tok_persist_002", 5000);
+      // Transbank should NOT have been called
+      expect(mockGateway.requestRefund).not.toHaveBeenCalled();
+
+      // Restore
+      transactionRepository.save = originalSave;
     });
   });
 });

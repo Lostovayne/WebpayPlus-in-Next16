@@ -551,28 +551,21 @@ export async function pollStaleTransactionsAction(): Promise<{
         continue;
       }
 
+      let auditEvent: "AUTHORIZED" | "REJECTED" | undefined;
+      let auditDetails: JsonRecord | undefined;
+
       if (status.status === "AUTHORIZED" && status.response_code === 0) {
         applyCommitResponse(transaction, status);
-        await logAuditEvent(
-          transaction.props.id,
-          transaction.props.buyOrder,
-          "AUTHORIZED",
-          {
-            authorizationCode: status.authorization_code,
-            responseCode: status.response_code,
-          },
-        );
+        auditEvent = "AUTHORIZED";
+        auditDetails = {
+          authorizationCode: status.authorization_code,
+          responseCode: status.response_code,
+        };
         authorized++;
       } else if (status.response_code !== undefined) {
         applyCommitResponse(transaction, status);
-        await logAuditEvent(
-          transaction.props.id,
-          transaction.props.buyOrder,
-          "REJECTED",
-          {
-            responseCode: status.response_code,
-          },
-        );
+        auditEvent = "REJECTED";
+        auditDetails = { responseCode: status.response_code };
         rejected++;
       } else {
         // Ambiguous state — leave for next cycle
@@ -586,11 +579,21 @@ export async function pollStaleTransactionsAction(): Promise<{
       // processed this transaction while we were waiting for Transbank's response.
       const freshBeforeSave = await transactionRepository.findByToken(token);
       if (freshBeforeSave?.isTerminal) {
-        // Return handler already processed — skip save to avoid overwrite
+        // Return handler already processed — skip save AND audit to avoid phantom entries
         continue;
       }
 
       await transactionRepository.save(transaction);
+
+      // Audit log AFTER save — prevents phantom audit entries when save is skipped
+      if (auditEvent) {
+        await logAuditEvent(
+          transaction.props.id,
+          transaction.props.buyOrder,
+          auditEvent,
+          auditDetails ?? {},
+        );
+      }
     } catch (error) {
       if (error instanceof TransbankResponseMismatchError) {
         logger.error(
@@ -674,7 +677,11 @@ export async function refundTransactionAction(
   }
 
   if (transaction.props.status !== "AUTHORIZED") {
-    if (transaction.props.status === "REVERSED") {
+    if (
+      transaction.props.status === "REVERSED" ||
+      transaction.props.status === "FAILED"
+    ) {
+      // Idempotent: already processed or never authorized — nothing to refund
       return transaction.props;
     }
     throw new Error(
@@ -683,7 +690,11 @@ export async function refundTransactionAction(
   }
 
   try {
-    // 4. Call Transbank → refund
+    // 4. Persist checkpoint BEFORE calling Transbank (persist-before-network)
+    // If this save fails, we abort without calling Transbank — no financial risk.
+    await transactionRepository.save(transaction);
+
+    // 5. Call Transbank → refund
     const response = await getGateway().requestRefund(token, amount);
 
     // 5. Success: mark REVERSED
