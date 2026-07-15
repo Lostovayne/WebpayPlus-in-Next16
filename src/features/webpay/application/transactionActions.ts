@@ -29,7 +29,7 @@ function getGateway(): InstanceType<typeof TransbankGateway> {
  * @internal — blocked in production to prevent gateway hijacking
  */
 export async function __setGatewayForTesting(
-  mock: InstanceType<typeof TransbankGateway>,
+  mock: Partial<InstanceType<typeof TransbankGateway>>,
 ): Promise<void> {
   if (process.env.NODE_ENV === "production") {
     throw new Error("__setGatewayForTesting is not allowed in production");
@@ -613,6 +613,10 @@ export async function pollStaleTransactionsAction(): Promise<{
 
       // Transbank couldn't respond — is it older than 7 days? → will never resolve
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      // NOTE: Transbank's transaction_date may arrive as date-only ("2024-01-15")
+      // without a time component. `new Date("2024-01-15")` parses to midnight UTC,
+      // so the 7-day cutoff is approximate (±1 day) for date-only strings.
+      // Full ISO datetimes (e.g., "2024-01-15T14:30:00.000Z") are precise.
       const referenceDate =
         transaction.props.transactionDate ?? transaction.props.createdAt;
       if (referenceDate < sevenDaysAgo) {
