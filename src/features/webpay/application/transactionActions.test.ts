@@ -1,17 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { WebpayTransaction } from "../domain/Transaction";
 import { prisma } from "@/shared/lib/prisma";
+import { Prisma } from "generated/prisma";
+import type {
+  WebpayInitResponse,
+  WebpayCommitResponse,
+} from "../infrastructure/TransbankGateway";
+import { transactionRepository } from "../infrastructure/PrismaTransactionRepository";
 
 // ─── Mock Variables (module scope — vi.hoisted removed in vitest 4.x) ─────────
-
 const commitTransactionMock = vi.fn();
 const getTransactionStatusMock = vi.fn();
 const createTransactionMock = vi.fn();
 
 const mockGateway = {
-  createTransaction: (...args: any[]) => createTransactionMock(...args),
-  commitTransaction: (...args: any[]) => commitTransactionMock(...args),
-  getTransactionStatus: (...args: any[]) => getTransactionStatusMock(...args),
+  createTransaction: (
+    buyOrder: string,
+    sessionId: string,
+    amount: number,
+    returnUrl: string,
+  ): Promise<WebpayInitResponse> =>
+    createTransactionMock(buyOrder, sessionId, amount, returnUrl),
+  commitTransaction: (token: string): Promise<WebpayCommitResponse> =>
+    commitTransactionMock(token),
+  getTransactionStatus: (token: string): Promise<WebpayCommitResponse> =>
+    getTransactionStatusMock(token),
   requestRefund: vi.fn(),
   // Expose mocks for configuration
   _commitTransactionMock: commitTransactionMock,
@@ -153,7 +166,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   clearRepo();
   // Inject mock gateway via DI before each test
-  await __setGatewayForTesting(mockGateway as any);
+  await __setGatewayForTesting(mockGateway);
 });
 
 afterEach(async () => {
@@ -552,6 +565,94 @@ describe("initiateTransactionAction", () => {
 
       const allTx = Array.from(mockRepoStore.values());
       expect(allTx.some((t) => t.props.buyOrder === "A|B=1")).toBe(true);
+    });
+    it("throws when INITIALIZED exists but token is missing (no payment possible)", async () => {
+      const tx = WebpayTransaction.initialize(
+        "IDEM-NO-TOKEN",
+        "session-1",
+        5000,
+      );
+      // token is undefined — transaction was created but Transbank never responded
+      seed(tx);
+
+      await expect(
+        initiateTransactionAction(5000, "IDEM-NO-TOKEN"),
+      ).rejects.toThrow("Transaction in progress");
+    });
+
+    it("retries when existing transaction is FAILED (retryable terminal state)", async () => {
+      const tx = WebpayTransaction.initialize("IDEM-FAILED", "session-1", 5000);
+      tx.setToken("failed_token");
+      tx.markAsFailed();
+      seed(tx);
+
+      mockGateway._createTransactionMock.mockResolvedValueOnce({
+        token: "retry_token",
+        url: "https://webpay3gint.transbank.cl/webpayserver/initTransaction",
+      });
+
+      const result = await initiateTransactionAction(5000, "IDEM-FAILED");
+
+      expect(result).toEqual({
+        url: "https://webpay3gint.transbank.cl/webpayserver/initTransaction",
+        token: "retry_token",
+      });
+      // Should have created a new transaction (FAILED is retryable)
+      const allTx = Array.from(mockRepoStore.values());
+      expect(
+        allTx.filter((t) => t.props.buyOrder === "IDEM-FAILED"),
+      ).toHaveLength(2);
+    });
+
+    it("handles P2002 race condition — re-reads and returns existing transaction", async () => {
+      // Seed an existing transaction that the race condition will find
+      const existingTx = WebpayTransaction.initialize(
+        "RACE-KEY",
+        "session-1",
+        5000,
+      );
+      existingTx.setToken("race_token");
+      existingTx.setPaymentUrl(
+        "https://webpay3gint.transbank.cl/webpayserver/initTransaction",
+      );
+      seed(existingTx);
+
+      // Override save to throw P2002 on the FIRST call (simulating race condition)
+      const originalSave = transactionRepository.save;
+      let saveCallCount = 0;
+      transactionRepository.save = async (tx: WebpayTransaction) => {
+        saveCallCount++;
+        if (saveCallCount === 1) {
+          throw new Prisma.PrismaClientKnownRequestError(
+            "Unique constraint failed",
+            {
+              code: "P2002",
+              clientVersion: "7.0.0",
+              meta: { target: ["buy_order"] },
+            },
+          );
+        }
+        // Subsequent calls go to the real mock (stores in mockRepoStore)
+        return originalSave(tx);
+      };
+
+      const result = await initiateTransactionAction(5000, "RACE-KEY");
+
+      expect(result).toEqual({
+        url: "https://webpay3gint.transbank.cl/webpayserver/initTransaction",
+        token: "race_token",
+      });
+      expect(mockGateway._createTransactionMock).not.toHaveBeenCalled();
+
+      // Restore
+      transactionRepository.save = originalSave;
+    });
+
+    it("rejects idempotencyKey exceeding 26 characters", async () => {
+      const longKey = "a".repeat(27);
+      await expect(initiateTransactionAction(5000, longKey)).rejects.toThrow(
+        "Invalid idempotencyKey",
+      );
     });
   });
 });
