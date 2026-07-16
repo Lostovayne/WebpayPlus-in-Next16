@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import type { TransbankRedirectData } from "@/features/webpay/application/transactionActions";
 
@@ -22,14 +22,20 @@ import type { TransbankRedirectData } from "@/features/webpay/application/transa
  *
  * Reference: https://transbankdevelopers.cl/documentacion/webpay-plus
  */
+function formatCLP(amount: number) {
+  return new Intl.NumberFormat("es-CL", {
+    style: "currency",
+    currency: "CLP",
+    minimumFractionDigits: 0,
+  }).format(amount);
+}
+
 export function TransbankRedirectForm({
   action,
   amount,
-  formatCLP,
 }: {
   action: (formData: FormData) => Promise<TransbankRedirectData>;
   amount: number;
-  formatCLP: (n: number) => string;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [state, formAction] = useFormState(
@@ -51,7 +57,7 @@ export function TransbankRedirectForm({
       {/* Main form — triggers server action */}
       <form action={formAction}>
         <input type="hidden" name="amount" value={amount} />
-        <SubmitButton amount={amount} formatCLP={formatCLP} />
+        <SubmitButton amount={amount} />
       </form>
 
       {/* Hidden form — auto-submits POST to Transbank */}
@@ -64,13 +70,7 @@ export function TransbankRedirectForm({
   );
 }
 
-function SubmitButton({
-  amount,
-  formatCLP,
-}: {
-  amount: number;
-  formatCLP: (n: number) => string;
-}) {
+function SubmitButton({ amount }: { amount: number }) {
   const { pending } = useFormStatus();
 
   return (
@@ -84,7 +84,15 @@ function SubmitButton({
 
       <span className="relative flex items-center justify-center gap-3">
         {/* Lock icon */}
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-80">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          className="opacity-80"
+        >
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
         </svg>

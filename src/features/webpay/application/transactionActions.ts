@@ -3,7 +3,7 @@
 import { env } from "@/shared/env";
 import logger from "@/shared/lib/logger";
 import { prisma } from "@/shared/lib/prisma";
-import { AuditEvent, Prisma } from "generated/prisma";
+import { type AuditEvent, Prisma } from "generated/prisma";
 import {
   WebpayTransaction,
   isValidTransbankBuyOrder,
@@ -34,7 +34,7 @@ export async function __setGatewayForTesting(
   if (process.env.NODE_ENV === "production") {
     throw new Error("__setGatewayForTesting is not allowed in production");
   }
-  gateway = mock;
+  gateway = mock as TransbankGateway;
 }
 
 export async function __resetGatewayForTesting(): Promise<void> {
@@ -424,8 +424,8 @@ export async function confirmTransactionAction(token: string) {
       transaction.props.buyOrder,
       "AUTHORIZED",
       {
-        authorizationCode: transaction.props.authCode,
-        responseCode: transaction.props.responseCode,
+        authorizationCode: transaction.props.authCode ?? null,
+        responseCode: transaction.props.responseCode ?? null,
       },
     );
   } else if (newStatus === "REJECTED") {
@@ -434,7 +434,7 @@ export async function confirmTransactionAction(token: string) {
       transaction.props.buyOrder,
       "REJECTED",
       {
-        responseCode: transaction.props.responseCode,
+        responseCode: transaction.props.responseCode ?? null,
       },
     );
   } else if (newStatus === "FAILED") {
