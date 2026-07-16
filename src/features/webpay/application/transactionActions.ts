@@ -195,8 +195,8 @@ export async function initiateTransactionAction(
   amount: number,
   idempotencyKey?: string,
 ): Promise<TransbankRedirectData> {
-  if (amount <= 0)
-    throw new Error("Invalid amount: must be greater than zero.");
+  if (!Number.isInteger(amount) || amount <= 0)
+    throw new Error("Invalid amount: must be a positive integer (CLP).");
 
   // Idempotency: when a key is provided, use it directly as the buyOrder
   // so subsequent calls with the same key find the existing transaction.
@@ -670,6 +670,8 @@ export async function refundTransactionAction(
   token: string,
   amount: number,
 ): Promise<typeof WebpayTransaction.prototype.props> {
+  if (!Number.isInteger(amount) || amount <= 0)
+    throw new Error("Invalid refund amount: must be a positive integer (CLP).");
   // 1. Find transaction
   const transaction = await transactionRepository.findByToken(token);
   if (!transaction) {

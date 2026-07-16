@@ -1,19 +1,19 @@
 import { initiateTransactionAction } from "@/features/webpay/application/transactionActions";
 import { TransbankRedirectForm } from "./TransbankRedirectForm";
 
-// ─── Datos del producto (en un sistema real vendrían de props/params/DB) ─────
+// ─── Demo product data (would come from props/params/DB in production) ─────
 const PRODUCT = {
-  name: "Plan Pro — Licencia Anual",
+  name: "Pro Plan — Annual License",
   description:
-    "Acceso completo a todas las funciones premium, soporte prioritario y actualizaciones ilimitadas durante 12 meses.",
+    "Full access to all premium features, priority support, and unlimited updates for 12 months.",
   price: 15000,
   originalPrice: 19990,
   sku: "PRO-ANNUAL-2026",
   features: [
-    "Acceso ilimitado a todos los módulos",
-    "Soporte 24/7 por chat y correo",
-    "Actualizaciones automáticas incluidas",
-    "Factura electrónica inmediata",
+    "Unlimited access to all modules",
+    "24/7 chat and email support",
+    "Automatic updates included",
+    "Immediate electronic invoice",
   ],
 };
 
@@ -29,14 +29,14 @@ const discount = PRODUCT.originalPrice - PRODUCT.price;
 const discountPct = Math.round((discount / PRODUCT.originalPrice) * 100);
 
 export const metadata = {
-  title: "Checkout — Plan Pro",
-  description: "Completa tu compra de forma segura con Webpay Plus.",
+  title: "Checkout — Pro Plan",
+  description: "Complete your purchase securely with Webpay Plus.",
 };
 
 export default function CheckoutPage() {
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 font-sans">
-      {/* ─── Nav bar mínimo ──────────────────────────────────────────────── */}
+      {/* ─── Minimal nav bar ──────────────────────────────────────────────── */}
       <header className="border-b border-zinc-800 px-6 py-4">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -55,7 +55,7 @@ export default function CheckoutPage() {
               </svg>
             </div>
             <span className="font-semibold tracking-tight text-zinc-100">
-              MiTienda
+              MyStore
             </span>
           </div>
           <div className="flex items-center gap-1.5 text-xs text-zinc-500">
@@ -70,34 +70,34 @@ export default function CheckoutPage() {
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
-            Pago seguro con SSL
+            SSL Secure Payment
           </div>
         </div>
       </header>
 
-      {/* ─── Contenido principal ─────────────────────────────────────────── */}
+      {/* ─── Main content ─────────────────────────────────────────────────── */}
       <div className="max-w-5xl mx-auto px-4 py-10 md:py-16 grid md:grid-cols-[1fr_380px] gap-8 items-start">
-        {/* ─── Columna izquierda: Detalle del producto ─────────────────── */}
+        {/* ─── Left column: Product details ──────────────────────────────── */}
         <section className="space-y-6">
           {/* Breadcrumb */}
           <nav className="text-xs text-zinc-500 flex items-center gap-1.5">
             <a href="/" className="hover:text-zinc-300 transition-colors">
-              Inicio
+              Home
             </a>
             <span>/</span>
             <a
-              href="/productos"
+              href="/products"
               className="hover:text-zinc-300 transition-colors"
             >
-              Planes
+              Plans
             </a>
             <span>/</span>
-            <span className="text-zinc-400">Plan Pro</span>
+            <span className="text-zinc-400">Pro Plan</span>
           </nav>
 
-          {/* Card del producto */}
+          {/* Product card */}
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900 overflow-hidden">
-            {/* Banner del producto */}
+            {/* Product banner */}
             <div className="relative bg-gradient-to-br from-indigo-950 via-indigo-900 to-violet-950 h-40 flex items-center justify-center overflow-hidden">
               <div
                 className="absolute inset-0 opacity-20"
@@ -122,13 +122,13 @@ export default function CheckoutPage() {
                   </svg>
                 </div>
                 <div className="inline-flex items-center gap-1.5 bg-indigo-500/30 border border-indigo-400/30 rounded-full px-3 py-1 text-xs font-medium text-indigo-200">
-                  ✦ Más popular
+                  ✦ Most Popular
                 </div>
               </div>
             </div>
 
             <div className="p-6 space-y-5">
-              {/* Título y precio */}
+              {/* Title and price */}
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-mono text-zinc-500 mb-1">
@@ -143,7 +143,7 @@ export default function CheckoutPage() {
                 </div>
               </div>
 
-              {/* Precios */}
+              {/* Prices */}
               <div className="flex items-end gap-3">
                 <span className="text-3xl font-bold text-zinc-100">
                   {formatCLP(PRODUCT.price)}
@@ -158,7 +158,7 @@ export default function CheckoutPage() {
                 </div>
               </div>
 
-              {/* Ahorro */}
+              {/* Savings */}
               <p className="text-sm text-emerald-400 flex items-center gap-1.5">
                 <svg
                   width="14"
@@ -171,10 +171,10 @@ export default function CheckoutPage() {
                   <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                   <polyline points="22 4 12 14.01 9 11.01" />
                 </svg>
-                Ahorras {formatCLP(discount)} con esta oferta
+                You save {formatCLP(discount)} with this offer
               </p>
 
-              {/* Divisor */}
+              {/* Divider */}
               <div className="border-t border-zinc-800" />
 
               {/* Features */}
@@ -203,23 +203,23 @@ export default function CheckoutPage() {
           </div>
         </section>
 
-        {/* ─── Columna derecha: Resumen y pago ─────────────────────────── */}
+        {/* ─── Right column: Summary and payment ──────────────────────────── */}
         <section className="space-y-4 md:sticky md:top-8">
-          {/* Resumen de orden */}
+          {/* Order summary */}
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
             <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
-              Resumen del pedido
+              Order Summary
             </h2>
 
             <div className="space-y-2.5">
               <div className="flex justify-between text-sm">
-                <span className="text-zinc-400">Plan Pro × 1</span>
+                <span className="text-zinc-400">Pro Plan × 1</span>
                 <span className="text-zinc-300">
                   {formatCLP(PRODUCT.originalPrice)}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-emerald-400">Descuento aplicado</span>
+                <span className="text-emerald-400">Discount applied</span>
                 <span className="text-emerald-400">−{formatCLP(discount)}</span>
               </div>
               <div className="border-t border-zinc-800 pt-2.5 flex justify-between">
@@ -230,7 +230,7 @@ export default function CheckoutPage() {
               </div>
             </div>
 
-            {/* Botón de pago — POST redirect a Transbank */}
+            {/* Payment button — POST redirect to Transbank */}
             <TransbankRedirectForm
               action={async (formData) => {
                 "use server";
@@ -240,7 +240,7 @@ export default function CheckoutPage() {
               amount={PRODUCT.price}
             />
 
-            {/* Badge Webpay */}
+            {/* Webpay badge */}
             <div className="flex items-center justify-center gap-2 pt-1">
               <svg
                 width="12"
@@ -253,20 +253,20 @@ export default function CheckoutPage() {
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
               </svg>
               <span className="text-xs text-zinc-500">
-                Pago procesado por{" "}
+                Payment processed by{" "}
                 <span className="text-zinc-400 font-medium">Webpay Plus</span> ·
                 Transbank
               </span>
             </div>
           </div>
 
-          {/* Garantías */}
+          {/* Guarantees */}
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 space-y-3">
             {[
               {
                 icon: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
-                label: "Pago 100% seguro",
-                sub: "Encriptación SSL de 256 bits",
+                label: "100% Secure Payment",
+                sub: "256-bit SSL encryption",
               },
               {
                 icon: (
@@ -275,8 +275,8 @@ export default function CheckoutPage() {
                     <polyline points="9 22 9 12 15 12 15 22" />
                   </>
                 ),
-                label: "Factura electrónica",
-                sub: "Se envía automáticamente",
+                label: "Electronic Invoice",
+                sub: "Sent automatically",
               },
               {
                 icon: (
@@ -285,8 +285,8 @@ export default function CheckoutPage() {
                     <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                   </>
                 ),
-                label: "Acceso inmediato",
-                sub: "Actívate en segundos tras el pago",
+                label: "Instant Access",
+                sub: "Activates in seconds after payment",
               },
             ].map(({ icon, label, sub }) => (
               <div key={label} className="flex items-start gap-3">
