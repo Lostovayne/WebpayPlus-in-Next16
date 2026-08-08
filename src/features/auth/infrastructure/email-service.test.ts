@@ -1,36 +1,51 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { EmailProvider } from "@/features/auth/domain/email-provider";
 
-// Set required env vars before any imports
+// ─── Env setup (before any imports) ────────────────────────────────────────────
 process.env.WEBPAY_COMMERCE_CODE = "597055555532";
 process.env.WEBPAY_API_SECRET = "test-secret-min-32-characters-long";
 process.env.DATABASE_URL = "postgresql://user:pass@localhost:5432/db";
 process.env.CRON_SECRET = "a".repeat(32);
 process.env.BETTER_AUTH_SECRET = "a".repeat(32);
-process.env.RESEND_API_KEY = "re_test_key";
+// Note: RESEND_API_KEY is intentionally NOT set — dev mode by default
 
-// Mock Resend before importing email-service
-const mockSend = vi.fn();
-vi.mock("resend", () => ({
-  Resend: class MockResend {
-    emails = { send: mockSend };
-    constructor(_apiKey: string) {}
+// ─── Mock logger (instead of mocking the resend package) ───────────────────────
+vi.mock("@/shared/lib/logger", () => ({
+  default: {
+    debug: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
   },
 }));
 
+// Import the mocked logger for assertions
+import logger from "@/shared/lib/logger";
+
+// ─── Tests ─────────────────────────────────────────────────────────────────────
+
 describe("withRetry", () => {
-  beforeEach(() => {
+  let mockProvider: EmailProvider;
+
+  beforeEach(async () => {
     vi.useFakeTimers();
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    mockSend.mockReset();
+    const { _setEmailProvider } = await import("./email-service");
+    mockProvider = {
+      name: "mock",
+      send: vi.fn(),
+    };
+    _setEmailProvider(mockProvider);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    const { _setEmailProvider } = await import("./email-service");
+    _setEmailProvider(null);
   });
 
   it("retries 5 times before throwing (exponential backoff cap now reachable)", async () => {
-    mockSend.mockRejectedValue(new Error("Network error"));
+    vi.mocked(mockProvider.send).mockRejectedValue(new Error("Network error"));
 
     const { sendVerificationEmail } = await import("./email-service");
     const promise = sendVerificationEmail("test@example.com", "http://localhost/verify");
@@ -42,27 +57,86 @@ describe("withRetry", () => {
     await vi.advanceTimersByTimeAsync(15000);
 
     await expect(promise).rejects.toThrow("Network error");
-    expect(mockSend).toHaveBeenCalledTimes(5);
+    expect(mockProvider.send).toHaveBeenCalledTimes(5);
   });
 
   it("succeeds on first attempt without retry", async () => {
-    mockSend.mockResolvedValue({ id: "email-123" });
+    vi.mocked(mockProvider.send).mockResolvedValue({ id: "email-123", provider: "mock" });
 
     const { sendVerificationEmail } = await import("./email-service");
     await sendVerificationEmail("test@example.com", "http://localhost/verify");
-    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockProvider.send).toHaveBeenCalledTimes(1);
   });
 
   it("succeeds on second attempt after one retry", async () => {
-    mockSend
+    vi.mocked(mockProvider.send)
       .mockRejectedValueOnce(new Error("Temporary failure"))
-      .mockResolvedValueOnce({ id: "email-123" });
+      .mockResolvedValueOnce({ id: "email-123", provider: "mock" });
 
     const { sendVerificationEmail } = await import("./email-service");
     const promise = sendVerificationEmail("test@example.com", "http://localhost/verify");
     await vi.advanceTimersByTimeAsync(1000);
     await promise;
 
-    expect(mockSend).toHaveBeenCalledTimes(2);
+    expect(mockProvider.send).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("dev mode (no RESEND_API_KEY)", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    const { _setEmailProvider } = await import("./email-service");
+    _setEmailProvider(null); // Reset to factory default (noop)
+  });
+
+  afterEach(async () => {
+    const { _setEmailProvider } = await import("./email-service");
+    _setEmailProvider(null);
+  });
+
+  it("createEmailProvider returns NoopEmailProvider when RESEND_API_KEY is absent", async () => {
+    const { createEmailProvider } = await import("./email-service");
+    const provider = createEmailProvider();
+    expect(provider.name).toBe("noop");
+  });
+
+  it("sendVerificationEmail logs debug without sending in dev mode", async () => {
+    const { sendVerificationEmail } = await import("./email-service");
+    await sendVerificationEmail("dev@example.com", "http://localhost/verify");
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "dev@example.com",
+        subject: "Verify your email address",
+      }),
+      expect.stringContaining("dev mode"),
+    );
+    expect(logger.debug).toHaveBeenCalledTimes(1);
+  });
+
+  it("sendOTPEmail logs debug without sending in dev mode", async () => {
+    const { sendOTPEmail } = await import("./email-service");
+    await sendOTPEmail("dev@example.com", "123456");
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "dev@example.com",
+        subject: "Your verification code",
+      }),
+      expect.stringContaining("dev mode"),
+    );
+  });
+
+  it("sendPasswordResetEmail logs debug without sending in dev mode", async () => {
+    const { sendPasswordResetEmail } = await import("./email-service");
+    await sendPasswordResetEmail("dev@example.com", "http://localhost/reset");
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "dev@example.com",
+        subject: "Reset your password",
+      }),
+      expect.stringContaining("dev mode"),
+    );
   });
 });
