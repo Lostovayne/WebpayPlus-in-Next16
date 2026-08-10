@@ -50,3 +50,6 @@ CLAUDE.md
 .atl/
 openspec/
 skills-lock.json
+
+# command code local config
+.commandcode/

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { initiateTransactionAction } from "@/features/webpay/application/transactionActions";
 import { TransbankRedirectForm } from "./TransbankRedirectForm";
 
@@ -81,16 +82,16 @@ export default function CheckoutPage() {
         <section className="space-y-6">
           {/* Breadcrumb */}
           <nav className="text-xs text-zinc-500 flex items-center gap-1.5">
-            <a href="/" className="hover:text-zinc-300 transition-colors">
+            <Link href="/" className="hover:text-zinc-300 transition-colors">
               Home
-            </a>
+            </Link>
             <span>/</span>
-            <a
+            <Link
               href="/products"
               className="hover:text-zinc-300 transition-colors"
             >
               Plans
-            </a>
+            </Link>
             <span>/</span>
             <span className="text-zinc-400">Pro Plan</span>
           </nav>

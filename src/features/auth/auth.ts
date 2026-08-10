@@ -1,16 +1,16 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { twoFactor } from "better-auth/plugins/two-factor";
 import { multiSession } from "better-auth/plugins/multi-session";
-import { prisma } from "@/shared/lib/prisma";
-import logger from "@/shared/lib/logger";
+import { twoFactor } from "better-auth/plugins/two-factor";
 import { env } from "@/shared/env";
-import { createUpstashSecondaryStorage } from "./infrastructure/upstash-secondary-storage";
+import logger from "@/shared/lib/logger";
+import { prisma } from "@/shared/lib/prisma";
 import {
-  sendVerificationEmail,
   sendOTPEmail,
   sendPasswordResetEmail,
+  sendVerificationEmail,
 } from "./infrastructure/email-service";
+import { createUpstashSecondaryStorage } from "./infrastructure/upstash-secondary-storage";
 
 /**
  * BetterAuth configuration for Webpay Plus integration.
@@ -59,7 +59,7 @@ export const auth = betterAuth({
     requireEmailVerification: true,
     minPasswordLength: 8,
     maxPasswordLength: 128,
-    sendResetPassword: async ({ user, url, token }, request) => {
+    sendResetPassword: async ({ user, url }, _request) => {
       await sendPasswordResetEmail(user.email, url);
     },
   },
@@ -67,7 +67,7 @@ export const auth = betterAuth({
   // Email verification
   emailVerification: {
     sendOnSignUp: true,
-    sendVerificationEmail: async ({ user, url, token }, request) => {
+    sendVerificationEmail: async ({ user, url }, _request) => {
       await sendVerificationEmail(user.email, url);
     },
   },
@@ -81,7 +81,7 @@ export const auth = betterAuth({
         digits: 6,
         allowedAttempts: 5,
         storeOTP: "encrypted",
-        sendOTP: async ({ user, otp }, ctx) => {
+        sendOTP: async ({ user, otp }, _ctx) => {
           await sendOTPEmail(user.email, otp);
         },
       },
@@ -134,7 +134,10 @@ export const auth = betterAuth({
         // Fire-and-forget: email sending shouldn't delay the response
         promise.catch((err) => {
           const error = err instanceof Error ? err : new Error(String(err));
-          logger.error({ err: error, tag: "background_task_error" }, "[Auth] Background task failed");
+          logger.error(
+            { err: error, tag: "background_task_error" },
+            "[Auth] Background task failed",
+          );
         });
       },
     },
@@ -148,31 +151,40 @@ export const auth = betterAuth({
     session: {
       create: {
         after: async (session, ctx) => {
-          logger.debug({
-            event: "session.create",
-            userId: session.userId,
-            ipAddress: ctx?.request?.headers.get("x-forwarded-for"),
-            userAgent: ctx?.request?.headers.get("user-agent"),
-          }, "[Auth] Session created");
+          logger.debug(
+            {
+              event: "session.create",
+              userId: session.userId,
+              ipAddress: ctx?.request?.headers.get("x-forwarded-for"),
+              userAgent: ctx?.request?.headers.get("user-agent"),
+            },
+            "[Auth] Session created",
+          );
         },
       },
       delete: {
         after: async (session) => {
-          logger.debug({
-            event: "session.delete",
-            sessionId: session.id,
-            userId: session.userId,
-          }, "[Auth] Session deleted");
+          logger.debug(
+            {
+              event: "session.delete",
+              sessionId: session.id,
+              userId: session.userId,
+            },
+            "[Auth] Session deleted",
+          );
         },
       },
     },
     user: {
       update: {
-        after: async (user, ctx) => {
-          logger.debug({
-            event: "user.update",
-            userId: user.id,
-          }, "[Auth] User updated");
+        after: async (user, _ctx) => {
+          logger.debug(
+            {
+              event: "user.update",
+              userId: user.id,
+            },
+            "[Auth] User updated",
+          );
         },
       },
     },
