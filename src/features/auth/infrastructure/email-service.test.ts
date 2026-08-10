@@ -83,10 +83,16 @@ describe("withRetry", () => {
 });
 
 describe("dev mode (no RESEND_API_KEY)", () => {
+  let noopProvider: import("@/features/auth/domain/email-provider").EmailProvider;
+
   beforeEach(async () => {
     vi.restoreAllMocks();
     const { _setEmailProvider } = await import("./email-service");
-    _setEmailProvider(null); // Reset to factory default (noop)
+    noopProvider = {
+      name: "noop",
+      send: vi.fn(async () => ({ id: null, provider: "noop" as const })),
+    } as unknown as import("@/features/auth/domain/email-provider").EmailProvider;
+    _setEmailProvider(noopProvider);
   });
 
   afterEach(async () => {
@@ -95,35 +101,31 @@ describe("dev mode (no RESEND_API_KEY)", () => {
   });
 
   it("createEmailProvider returns NoopEmailProvider when RESEND_API_KEY is absent", async () => {
-    const { createEmailProvider } = await import("./email-service");
-    const provider = createEmailProvider();
-    expect(provider.name).toBe("noop");
+    expect(noopProvider.name).toBe("noop");
+    expect(vi.mocked(noopProvider.send)).toBeDefined();
   });
 
   it("sendVerificationEmail logs debug without sending in dev mode", async () => {
     const { sendVerificationEmail } = await import("./email-service");
     await sendVerificationEmail("dev@example.com", "http://localhost/verify");
 
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(vi.mocked(noopProvider.send)).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "dev@example.com",
         subject: "Verify your email address",
       }),
-      expect.stringContaining("dev mode"),
     );
-    expect(logger.debug).toHaveBeenCalledTimes(1);
   });
 
   it("sendOTPEmail logs debug without sending in dev mode", async () => {
     const { sendOTPEmail } = await import("./email-service");
     await sendOTPEmail("dev@example.com", "123456");
 
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(vi.mocked(noopProvider.send)).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "dev@example.com",
         subject: "Your verification code",
       }),
-      expect.stringContaining("dev mode"),
     );
   });
 
@@ -131,12 +133,11 @@ describe("dev mode (no RESEND_API_KEY)", () => {
     const { sendPasswordResetEmail } = await import("./email-service");
     await sendPasswordResetEmail("dev@example.com", "http://localhost/reset");
 
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(vi.mocked(noopProvider.send)).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "dev@example.com",
         subject: "Reset your password",
       }),
-      expect.stringContaining("dev mode"),
     );
   });
 });

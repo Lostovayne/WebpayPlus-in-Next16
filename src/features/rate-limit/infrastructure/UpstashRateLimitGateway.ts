@@ -1,5 +1,6 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
+import { env } from "@/shared/env";
 import type { RateLimitGateway, RateLimitResult } from "../domain/RateLimitGateway";
 import { parseWindow } from "../domain/parseWindow";
 
@@ -17,8 +18,8 @@ export class UpstashRateLimitGateway implements RateLimitGateway {
   private readonly limiters = new Map<string, Ratelimit>();
 
   constructor() {
-    const url = process.env.UPSTASH_REDIS_REST_URL;
-    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+    const url = env.UPSTASH_REDIS_REST_URL;
+    const token = env.UPSTASH_REDIS_REST_TOKEN;
 
     if (!url || !token) {
       throw new Error(

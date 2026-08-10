@@ -13,7 +13,7 @@ const securityHeaders = [
   {
     key: "Content-Security-Policy",
     value:
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://webpay3gint.transbank.cl https://webpay3g.transbank.cl; base-uri 'self'; form-action 'self' https://webpay3gint.transbank.cl https://webpay3g.transbank.cl; upgrade-insecure-requests",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://webpay3gint.transbank.cl https://webpay3g.transbank.cl; base-uri 'self'; form-action 'self' https://webpay3gint.transbank.cl https://webpay3g.transbank.cl; object-src 'none'; frame-ancestors 'none'; upgrade-insecure-requests",
   },
   {
     key: "Permissions-Policy",

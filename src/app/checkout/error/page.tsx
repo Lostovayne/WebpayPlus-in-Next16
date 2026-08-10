@@ -3,7 +3,22 @@ export default async function CheckoutErrorPage({
 }: {
   searchParams: Promise<{ reason?: string }>;
 }) {
-  const { reason } = await searchParams;
+  const { reason: rawReason } = await searchParams;
+  const ALLOWED_REASONS = new Set([
+    "aborted_by_user",
+    "timeout",
+    "invalid_payload",
+    "no_token",
+    "no_buy_order",
+    "not_authorized",
+    "system_failed",
+    "REJECTED",
+    "FAILED",
+    "ABORTED",
+  ]);
+  const safeReason =
+    rawReason && ALLOWED_REASONS.has(rawReason) ? rawReason : "Desconocida";
+
   return (
     <main className="min-h-screen grid items-center justify-center p-8 bg-black text-white">
       <div className="max-w-md w-full border border-red-800 p-8 rounded-xl bg-gray-900 shadow-2xl text-center">
@@ -12,7 +27,7 @@ export default async function CheckoutErrorPage({
         </div>
         <h1 className="text-2xl font-bold mb-2 text-red-400">Pago Fallido</h1>
         <p className="text-gray-400 mb-6 font-mono text-sm tracking-widest bg-black/50 p-2 rounded">
-          RAZÓN: {reason ?? "Desconocida"}
+          RAZÓN: {safeReason}
         </p>
         <a
           href="/checkout"

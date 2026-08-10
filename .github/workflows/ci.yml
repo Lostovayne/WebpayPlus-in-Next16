@@ -23,11 +23,8 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "bun"
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
-        with:
-          cache: true
       - run: bun install --frozen-lockfile
       - run: bun run lint
 
@@ -41,11 +38,8 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "bun"
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
-        with:
-          cache: true
       - run: bun install --frozen-lockfile
       - run: bunx prisma generate
       - run: bunx tsc --noEmit -p tsconfig.ci.json
@@ -60,11 +54,8 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "bun"
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
-        with:
-          cache: true
       - run: bun install --frozen-lockfile
       - run: bunx prisma generate
       - run: bun run test:run --coverage
@@ -85,10 +76,10 @@ jobs:
       WEBPAY_COMMERCE_CODE: "597055555532"
       WEBPAY_API_SECRET: "test-secret-min-32-characters-long"
       WEBPAY_ENVIRONMENT: "integration"
-      NEXT_PUBLIC_APP_URL: "http://localhost:3000"
+      NEXT_PUBLIC_APP_URL: "https://example.com"
       CRON_SECRET: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       BETTER_AUTH_SECRET: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      BETTER_AUTH_URL: "http://localhost:3000"
+      BETTER_AUTH_URL: "https://example.com"
       RESEND_API_KEY: "re_test_key"
       RESEND_FROM_EMAIL: "noreply@example.com"
     steps:
@@ -97,11 +88,8 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "bun"
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
-        with:
-          cache: true
       - run: bun install --frozen-lockfile
       - run: bunx prisma generate
       - run: bun run build

@@ -34,8 +34,12 @@ async function handleReturn(
   const { tokenWs, tbkToken, buyOrder } = params;
 
   if (tbkToken) {
-    if (buyOrder) {
-      await abortTransactionAction(buyOrder, tbkToken);
+    try {
+      if (buyOrder) {
+        await abortTransactionAction(buyOrder, tbkToken);
+      }
+    } catch (error) {
+      logger.error({ err: error, buyOrder }, "[Webpay] Error en abortTransactionAction (TBK_TOKEN)");
     }
     return NextResponse.redirect(
       new URL("/checkout/error?reason=aborted_by_user", req.url),
@@ -44,7 +48,11 @@ async function handleReturn(
   }
 
   if (buyOrder && !tokenWs) {
-    await abortTransactionAction(buyOrder);
+    try {
+      await abortTransactionAction(buyOrder);
+    } catch (error) {
+      logger.error({ err: error, buyOrder }, "[Webpay] Error en abortTransactionAction (timeout)");
+    }
     return NextResponse.redirect(
       new URL("/checkout/error?reason=timeout", req.url),
       303,
@@ -88,7 +96,16 @@ async function handleReturn(
  * Body is application/x-www-form-urlencoded, NOT JSON.
  */
 export async function POST(req: NextRequest) {
-  const text = await req.text();
+  let text: string;
+  try {
+    text = await req.text();
+  } catch (error) {
+    logger.error({ err: error }, "[Webpay POST] Failed to read request body");
+    return NextResponse.redirect(
+      new URL("/checkout/error?reason=invalid_payload", req.url),
+      303,
+    );
+  }
   const params = parseReturnParams(new URLSearchParams(text));
 
   if (!params.tokenWs && !params.tbkToken && !params.buyOrder) {

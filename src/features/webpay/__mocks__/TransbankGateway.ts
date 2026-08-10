@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import type {
   WebpayInitResponse,
   WebpayCommitResponse,
@@ -12,13 +13,12 @@ import { TransbankAlreadyProcessedError } from "../infrastructure/TransbankGatew
  * No hace llamadas HTTP reales.
  */
 export class MockTransbankGateway {
-  public createTransactionMock = vi.fn<
-    [string, string, number, string],
-    Promise<WebpayInitResponse>
-  >();
-  public commitTransactionMock = vi.fn<[string], Promise<WebpayCommitResponse>>();
-  public getTransactionStatusMock = vi.fn<[string], Promise<WebpayCommitResponse>>();
-  public requestRefundMock = vi.fn<[string, number], Promise<WebpayRefundResponse>>();
+  public createTransactionMock = vi.fn(
+    async (_buyOrder: string, _sessionId: string, _amount: number, _returnUrl: string): Promise<WebpayInitResponse> => ({ token: "", url: "" }),
+  );
+  public commitTransactionMock = vi.fn(async (_token: string): Promise<WebpayCommitResponse> => ({} as WebpayCommitResponse));
+  public getTransactionStatusMock = vi.fn(async (_token: string): Promise<WebpayCommitResponse> => ({} as WebpayCommitResponse));
+  public requestRefundMock = vi.fn(async (_token: string, _amount: number): Promise<WebpayRefundResponse> => ({} as WebpayRefundResponse));
 
   async createTransaction(
     buyOrder: string,

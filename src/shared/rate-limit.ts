@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { env } from "@/shared/env";
 import type { RateLimitGateway } from "@/features/rate-limit/domain/RateLimitGateway";
 import { MemoryRateLimitGateway } from "@/features/rate-limit/infrastructure/MemoryRateLimitGateway";
 
@@ -10,7 +11,7 @@ async function getGateway(): Promise<RateLimitGateway> {
   if (gateway) return gateway;
 
   const hasUpstash =
-    !!process.env.UPSTASH_REDIS_REST_URL && !!process.env.UPSTASH_REDIS_REST_TOKEN;
+    !!env.UPSTASH_REDIS_REST_URL && !!env.UPSTASH_REDIS_REST_TOKEN;
 
   if (hasUpstash) {
     // Dynamic import — only loads @upstash packages when actually needed

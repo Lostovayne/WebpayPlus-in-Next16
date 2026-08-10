@@ -55,6 +55,21 @@ if (!data.BETTER_AUTH_URL) {
   data.BETTER_AUTH_URL = "http://localhost:3000";
 }
 
+if (process.env.NODE_ENV === "production") {
+  if (!data.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY is required in production");
+  }
+  if (!data.RESEND_FROM_EMAIL) {
+    throw new Error("RESEND_FROM_EMAIL is required in production");
+  }
+  if (!data.NEXT_PUBLIC_APP_URL.startsWith("https://")) {
+    throw new Error("NEXT_PUBLIC_APP_URL must use https:// in production");
+  }
+  if (!data.BETTER_AUTH_URL.startsWith("https://")) {
+    throw new Error("BETTER_AUTH_URL must use https:// in production");
+  }
+}
+
 // After post-parse validation, BETTER_AUTH_URL is guaranteed to be defined
 type EnvData = typeof data;
 export const env: Omit<EnvData, "BETTER_AUTH_URL"> & { BETTER_AUTH_URL: string } = {

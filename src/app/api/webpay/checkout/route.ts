@@ -17,23 +17,43 @@ export async function POST(req: NextRequest) {
   const key = `checkout:${clientIp}`;
 
   return rateLimitOrProceed(req, key, "1 m", 60, async () => {
-    // Parse amount from request body
-    const body = await req.json().catch(() => null);
-    const amount = body?.amount;
-
-    if (typeof amount !== "number" || amount <= 0) {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
       return NextResponse.json(
-        { error: "Invalid Request", message: "A valid positive amount is required." },
+        { error: "Invalid Request", message: "Request body must be valid JSON." },
         { status: 400 },
       );
     }
 
-    // Delegate to the existing server action.
-    // initiateTransactionAction calls redirect() internally — this is fine
-    // in a Route Handler because Next.js intercepts the redirect.
-    await initiateTransactionAction(amount);
+    const amount = (body as Record<string, unknown>)?.amount;
 
-    // unreachable — redirect() throws before reaching here
-    return new NextResponse(null, { status: 303 });
+    if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {
+      return NextResponse.json(
+        { error: "Invalid Request", message: "A valid positive integer amount is required." },
+        { status: 400 },
+      );
+    }
+
+    try {
+      const result = await initiateTransactionAction(amount);
+      return NextResponse.json(result, { status: 201 });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      if (message.includes("already processed")) {
+        return NextResponse.json({ error: "Conflict", message }, { status: 409 });
+      }
+      if (message.includes("in progress")) {
+        return NextResponse.json({ error: "Conflict", message }, { status: 409 });
+      }
+      if (message.includes("Invalid amount") || message.includes("Invalid idempotency")) {
+        return NextResponse.json({ error: "Invalid Request", message }, { status: 400 });
+      }
+      return NextResponse.json(
+        { error: "Payment initiation failed", message },
+        { status: 500 },
+      );
+    }
   });
 }

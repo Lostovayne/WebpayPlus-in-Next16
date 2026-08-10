@@ -106,7 +106,7 @@ model WebpayTransaction {
 
   // Return data via callback
   vci                String?   @db.VarChar(10)
-  cardNumber         String?   @map("card_number") @db.VarChar(19)
+  cardNumber         String?   @map("card_number") @db.VarChar(4)
   accountingDate     String?   @map("accounting_date") @db.VarChar(4)
   transactionDate    DateTime? @map("transaction_date")
   authCode           String?   @map("auth_code") @db.VarChar(6)
