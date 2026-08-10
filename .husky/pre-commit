@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -e
+
+# Only format/lint source files (exclude non-TS/JSON from biome)
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx|js|jsx|json|css|md)$' || true)
+
+if [ -n "$STAGED" ]; then
+  echo "$STAGED" | xargs bunx biome format --write
+  echo "$STAGED" | xargs bunx biome check
+  git add$STAGED
+fi
+
+# Typecheck (fail on any TS error)
+bunx tsc --noEmit -p tsconfig.ci.json
+
+# Run full test suite
+bun run test:run
