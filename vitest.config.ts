@@ -10,6 +10,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    env: {
+      NODE_ENV: "test",
+    },
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     coverage: {
       provider: "v8",

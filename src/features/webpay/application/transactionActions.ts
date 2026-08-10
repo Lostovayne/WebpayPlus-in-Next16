@@ -324,7 +324,10 @@ export async function initiateTransactionAction(
       transaction.props.id,
       transaction.props.buyOrder,
       "MARKED_FAILED",
-      { reason: String(err) },
+      {
+        reason:
+          err instanceof Error ? err.message.slice(0, 500) : "unknown_error",
+      },
     );
     throw new Error("Error initiating payment. Try again later.");
   }
@@ -554,7 +557,12 @@ export async function pollStaleTransactionsAction(): Promise<{
       let auditEvent: "AUTHORIZED" | "REJECTED" | undefined;
       let auditDetails: JsonRecord | undefined;
 
-      if (status.status === "AUTHORIZED" && status.response_code === 0) {
+      if (status.status === "REVERSED" || status.status === "NULLIFIED" || status.status === "PARTIALLY_NULLIFIED") {
+        transaction.markAsRejected(status.response_code);
+        auditEvent = "REJECTED";
+        auditDetails = { responseCode: status.response_code, transbankStatus: status.status };
+        rejected++;
+      } else if (status.status === "AUTHORIZED" && status.response_code === 0) {
         applyCommitResponse(transaction, status);
         auditEvent = "AUTHORIZED";
         auditDetails = {
@@ -637,7 +645,21 @@ export async function pollStaleTransactionsAction(): Promise<{
     }
   }
 
-  return { processed: stale.length, authorized, rejected, failed };
+  return {
+    processed: authorized + rejected + failed,
+    total: stale.length,
+    skipped: stale.length - (authorized + rejected + failed),
+    authorized,
+    rejected,
+    failed,
+  } as {
+    processed: number;
+    total: number;
+    skipped: number;
+    authorized: number;
+    rejected: number;
+    failed: number;
+  };
 }
 
 // ─── Use Case 5: Refund Transaction ─────────────────────────────────────

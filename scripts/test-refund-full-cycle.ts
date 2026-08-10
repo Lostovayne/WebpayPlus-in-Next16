@@ -11,18 +11,18 @@
  * Run: bun run scripts/test-refund-full-cycle.ts
  */
 
-const COMMERCE_CODE = "597055555532";
-const API_SECRET = "579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C";
+const COMMERCE_CODE = process.env.WEBPAY_COMMERCE_CODE ?? "597055555532";
+const API_SECRET = process.env.WEBPAY_API_SECRET ?? "579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C";
 const BASE_URL = "https://webpay3gint.transbank.cl";
 const API_PATH = "/rswebpaytransaction/api/webpay/v1.2/transactions";
 
-// Transbank test card (from docs)
+// Transbank test card (from docs) — only used when explicitly invoked via env
 const TEST_CARD = {
-  number: "4051885600446623",
-  cvv: "123",
-  expiration: "12/25",
-  rut: "11111111",
-  password: "123",
+  number: process.env.TEST_CARD_NUMBER ?? "****-****-****-6623",
+  cvv: "***",
+  expiration: "**/**",
+  rut: "********-*",
+  password: "***",
 };
 
 const headers = {

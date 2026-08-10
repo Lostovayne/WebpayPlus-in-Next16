@@ -810,9 +810,11 @@ describe("pollStaleTransactionsAction", () => {
 
       const result = await pollStaleTransactionsAction();
 
-      expect(result.processed).toBe(1);
+      expect(result.processed).toBe(0);
       expect(result.authorized).toBe(0);
       expect(result.rejected).toBe(0);
+      expect(result.total).toBe(1);
+      expect(result.skipped).toBe(1);
 
       // Transaction should NOT be marked as polled (stays in INITIALIZED for retry)
       const updated = mockRepoStore.get(tx.props.id);
@@ -854,7 +856,9 @@ describe("pollStaleTransactionsAction", () => {
 
       const result = await pollStaleTransactionsAction();
 
-      expect(result.processed).toBe(1);
+      expect(result.processed).toBe(0);
+      expect(result.total).toBe(1);
+      expect(result.skipped).toBe(1);
       expect(result.failed).toBe(0);
 
       // Transaction should NOT be marked as polled (stays in INITIALIZED for retry)
@@ -904,8 +908,10 @@ describe("pollStaleTransactionsAction", () => {
 
       const result = await pollStaleTransactionsAction();
 
-      // Should have processed but NOT overwritten return handler's state
-      expect(result.processed).toBe(1);
+      // Guard skipped save — processed=0, total/skipped reflect the race
+      expect(result.processed).toBe(0);
+      expect(result.total).toBe(1);
+      expect(result.skipped).toBe(1);
       expect(result.authorized).toBe(0); // skipped — return handler already won
 
       const updated = mockRepoStore.get(tx.props.id);
@@ -959,8 +965,10 @@ describe("pollStaleTransactionsAction", () => {
 
       const result = await pollStaleTransactionsAction();
 
-      // Should have processed but NOT written audit log (save was skipped)
-      expect(result.processed).toBe(1);
+      // Guard skipped save — processed=0, no phantom audit
+      expect(result.processed).toBe(0);
+      expect(result.total).toBe(1);
+      expect(result.skipped).toBe(1);
       expect(result.authorized).toBe(0);
       expect(auditLogMock).not.toHaveBeenCalled(); // No phantom audit
     });

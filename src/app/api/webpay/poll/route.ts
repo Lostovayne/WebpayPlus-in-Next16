@@ -2,7 +2,7 @@ import { pollStaleTransactionsAction } from "@/features/webpay/application/trans
 import logger from "@/shared/lib/logger";
 import { env } from "@/shared/env";
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "crypto";
+import { timingSafeEqual } from "node:crypto";
 
 /**
  * GET /api/webpay/poll — Worker de Polling de Transacciones Abandonadas
@@ -27,10 +27,12 @@ export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const expectedAuth = `Bearer ${env.CRON_SECRET}`;
 
+  const authBuf = authHeader ? Buffer.from(authHeader) : null;
+  const expectedBuf = Buffer.from(expectedAuth);
   if (
-    !authHeader ||
-    authHeader.length !== expectedAuth.length ||
-    !timingSafeEqual(Buffer.from(authHeader), Buffer.from(expectedAuth))
+    !authBuf ||
+    authBuf.length !== expectedBuf.length ||
+    !timingSafeEqual(authBuf, expectedBuf)
   ) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

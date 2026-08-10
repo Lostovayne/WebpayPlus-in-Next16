@@ -122,7 +122,8 @@ export const auth = betterAuth({
   advanced: {
     useSecureCookies: env.BETTER_AUTH_URL.startsWith("https"),
     defaultCookieAttributes: {
-      sameSite: "strict", // Stricter CSRF protection for payment-integrated auth
+      sameSite: "strict",
+      httpOnly: true,
     },
     ipAddress: {
       ipAddressHeaders: ["x-forwarded-for", "x-real-ip"],

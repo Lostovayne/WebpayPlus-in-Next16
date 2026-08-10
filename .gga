@@ -55,7 +55,7 @@ TIMEOUT="300"
 
 # OpenCode provider: optional reasoning effort / variant
 # Examples: minimal, low, medium, high, max
-OPENCODE_VARIANT="high"
+OPENCODE_VARIANT="medium"
 
 # OpenCode provider: optional agent profile
 # Keep this lightweight. Agent prompts can add significant token overhead.
