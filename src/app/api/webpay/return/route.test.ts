@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebpayTransaction } from "@/features/webpay/domain/Transaction";
 import { prisma } from "@/shared/lib/prisma";
+import type { NextRequest } from "next/server";
 
 // ─── Mock Variables (module scope — vi.hoisted removed in vitest 4.x) ─────────
 
@@ -8,7 +9,7 @@ const commitTransactionMock = vi.fn();
 
 const mockGateway = {
   createTransaction: vi.fn(),
-  commitTransaction: (...args: any[]) => commitTransactionMock(...args),
+  commitTransaction: (...args: unknown[]) => commitTransactionMock(...args),
   getTransactionStatus: vi.fn(),
   requestRefund: vi.fn(),
   _commitTransactionMock: commitTransactionMock,
@@ -67,8 +68,11 @@ vi.mock("@/shared/lib/prisma", () => ({
 
 // ─── Import AFTER mocks ───────────────────────────────────────────────────────
 
-import { POST, GET } from "./route";
-import { __setGatewayForTesting, __resetGatewayForTesting } from "@/features/webpay/application/transactionActions";
+import {
+  __resetGatewayForTesting,
+  __setGatewayForTesting,
+} from "@/features/webpay/application/transactionActions";
+import { GET, POST } from "./route";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -80,15 +84,20 @@ function clearRepo() {
   mockRepoStore.clear();
 }
 
-function createPostRequest(body?: string, url = "http://localhost:3000/api/webpay/return") {
+function createPostRequest(
+  body?: string,
+  url = "http://localhost:3000/api/webpay/return",
+) {
   const parsedUrl = new URL(url);
   return {
     method: "POST",
-    headers: new Headers({ "Content-Type": "application/x-www-form-urlencoded" }),
+    headers: new Headers({
+      "Content-Type": "application/x-www-form-urlencoded",
+    }),
     text: async () => body ?? "",
     url,
     nextUrl: parsedUrl,
-  } as any;
+  } as unknown as NextRequest;
 }
 
 function createGetRequest(url: string) {
@@ -98,24 +107,38 @@ function createGetRequest(url: string) {
     headers: new Headers(),
     url,
     nextUrl: parsedUrl,
-  } as any;
+  } as unknown as NextRequest;
 }
 
 function mockCommitAuthorized() {
   mockGateway._commitTransactionMock.mockResolvedValueOnce({
-    vci: "TSO", amount: 5000, status: "AUTHORIZED", buy_order: "BO123",
-    session_id: "session-1", accounting_date: "0101",
-    transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "AUTH001",
-    payment_type_code: "VD", response_code: 0, installments_number: 1,
+    vci: "TSO",
+    amount: 5000,
+    status: "AUTHORIZED",
+    buy_order: "BO123",
+    session_id: "session-1",
+    accounting_date: "0101",
+    transaction_date: "2026-01-01T00:00:00.000Z",
+    authorization_code: "AUTH001",
+    payment_type_code: "VD",
+    response_code: 0,
+    installments_number: 1,
   });
 }
 
 function mockCommitRejected(responseCode = -1) {
   mockGateway._commitTransactionMock.mockResolvedValueOnce({
-    vci: "TSO", amount: 5000, status: "REJECTED", buy_order: "BO123",
-    session_id: "session-1", accounting_date: "0101",
-    transaction_date: "2026-01-01T00:00:00.000Z", authorization_code: "",
-    payment_type_code: "VD", response_code: responseCode, installments_number: 1,
+    vci: "TSO",
+    amount: 5000,
+    status: "REJECTED",
+    buy_order: "BO123",
+    session_id: "session-1",
+    accounting_date: "0101",
+    transaction_date: "2026-01-01T00:00:00.000Z",
+    authorization_code: "",
+    payment_type_code: "VD",
+    response_code: responseCode,
+    installments_number: 1,
   });
 }
 
@@ -124,7 +147,7 @@ function mockCommitRejected(responseCode = -1) {
 beforeEach(async () => {
   vi.clearAllMocks();
   clearRepo();
-  await __setGatewayForTesting(mockGateway as any);
+  await __setGatewayForTesting(mockGateway as never);
 });
 
 afterEach(async () => {
@@ -174,7 +197,9 @@ describe("POST /api/webpay/return", () => {
       const response = await POST(req);
 
       expect(response.status).toBe(303);
-      expect(response.headers.get("location")).toContain("reason=aborted_by_user");
+      expect(response.headers.get("location")).toContain(
+        "reason=aborted_by_user",
+      );
     });
 
     it("marks transaction as ABORTED", async () => {
@@ -197,14 +222,18 @@ describe("POST /api/webpay/return", () => {
       const response = await POST(req);
 
       expect(response.status).toBe(303);
-      expect(response.headers.get("location")).toContain("reason=invalid_payload");
+      expect(response.headers.get("location")).toContain(
+        "reason=invalid_payload",
+      );
     });
 
     it("redirects to timeout when only TBK_ORDEN_COMPRA is present (Transbank flow #2)", async () => {
       const tx = WebpayTransaction.initialize("BO123", "session-1", 5000);
       seed(tx);
 
-      const req = createPostRequest("TBK_ORDEN_COMPRA=BO123&TBK_ID_SESION=session-1");
+      const req = createPostRequest(
+        "TBK_ORDEN_COMPRA=BO123&TBK_ID_SESION=session-1",
+      );
       const response = await POST(req);
 
       expect(response.status).toBe(303);
@@ -216,7 +245,9 @@ describe("POST /api/webpay/return", () => {
       const response = await POST(req);
 
       expect(response.status).toBe(303);
-      expect(response.headers.get("location")).toContain("reason=invalid_payload");
+      expect(response.headers.get("location")).toContain(
+        "reason=invalid_payload",
+      );
     });
   });
 
@@ -232,7 +263,9 @@ describe("POST /api/webpay/return", () => {
       const response = await POST(req);
 
       expect(response.status).toBe(303);
-      expect(response.headers.get("location")).toContain("reason=system_failed");
+      expect(response.headers.get("location")).toContain(
+        "reason=system_failed",
+      );
 
       // Restore
       mockRepoStore.get = originalFindByToken;
@@ -245,7 +278,9 @@ describe("POST /api/webpay/return", () => {
 
       // Mock gateway to throw a non-TransbankAlreadyProcessedError
       // confirmTransactionAction catches it internally, marks FAILED, returns result
-      mockGateway._commitTransactionMock.mockRejectedValueOnce(new Error("Unexpected error"));
+      mockGateway._commitTransactionMock.mockRejectedValueOnce(
+        new Error("Unexpected error"),
+      );
 
       const req = createPostRequest("token_ws=tok_test_123");
       const response = await POST(req);
@@ -267,7 +302,9 @@ describe("POST /api/webpay/return", () => {
 
       // TBK_TOKEN takes priority — treated as cancellation
       expect(response.status).toBe(303);
-      expect(response.headers.get("location")).toContain("reason=aborted_by_user");
+      expect(response.headers.get("location")).toContain(
+        "reason=aborted_by_user",
+      );
     });
   });
 });
@@ -312,7 +349,9 @@ describe("GET /api/webpay/return", () => {
       const response = await GET(req);
 
       expect(response.status).toBe(303);
-      expect(response.headers.get("location")).toContain("reason=aborted_by_user");
+      expect(response.headers.get("location")).toContain(
+        "reason=aborted_by_user",
+      );
     });
   });
 
@@ -366,7 +405,9 @@ describe("GET /api/webpay/return", () => {
       const response = await GET(req);
 
       expect(response.status).toBe(303);
-      expect(response.headers.get("location")).toContain("reason=system_failed");
+      expect(response.headers.get("location")).toContain(
+        "reason=system_failed",
+      );
 
       // Restore
       mockRepoStore.get = originalFindByToken;

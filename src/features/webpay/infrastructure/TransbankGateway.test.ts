@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock env BEFORE imports
 vi.mock("@/shared/env", () => ({
@@ -10,14 +10,14 @@ vi.mock("@/shared/env", () => ({
 }));
 
 import {
-  TransbankGateway,
   TransbankAlreadyProcessedError,
+  TransbankGateway,
   TransbankRefundAlreadyProcessedError,
 } from "./TransbankGateway";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function mockFetchSuccess(body: any, status = 200) {
+function mockFetchSuccess(body: unknown, status = 200) {
   return vi.fn().mockResolvedValue({
     ok: true,
     status,
@@ -58,15 +58,25 @@ describe("TransbankGateway", () => {
 
   describe("createTransaction", () => {
     it("sends POST to correct URL with correct headers", async () => {
-      const mockResponse = { token: "tok-abc", url: "https://webpay3gint.transbank.cl/webpayserver/init_transaction?token=ABC" };
+      const mockResponse = {
+        token: "tok-abc",
+        url: "https://webpay3gint.transbank.cl/webpayserver/init_transaction?token=ABC",
+      };
       globalThis.fetch = mockFetchSuccess(mockResponse);
 
-      await gateway.createTransaction("BO-001", "sess-1", 5000, "https://example.com/return");
+      await gateway.createTransaction(
+        "BO-001",
+        "sess-1",
+        5000,
+        "https://example.com/return",
+      );
 
       expect(globalThis.fetch).toHaveBeenCalledOnce();
       const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0];
 
-      expect(url).toBe("https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions");
+      expect(url).toBe(
+        "https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions",
+      );
       expect(options.method).toBe("POST");
       expect(options.headers).toEqual({
         "Tbk-Api-Key-Id": "test-commerce",
@@ -79,7 +89,12 @@ describe("TransbankGateway", () => {
       const mockResponse = { token: "tok-abc", url: "https://example.com/pay" };
       globalThis.fetch = mockFetchSuccess(mockResponse);
 
-      await gateway.createTransaction("BO-001", "sess-1", 5000, "https://example.com/return");
+      await gateway.createTransaction(
+        "BO-001",
+        "sess-1",
+        5000,
+        "https://example.com/return",
+      );
 
       const [, options] = vi.mocked(globalThis.fetch).mock.calls[0];
       const body = JSON.parse(options.body as string);
@@ -99,7 +114,12 @@ describe("TransbankGateway", () => {
       };
       globalThis.fetch = mockFetchSuccess(mockResponse);
 
-      const result = await gateway.createTransaction("BO-001", "sess-1", 5000, "https://example.com/return");
+      const result = await gateway.createTransaction(
+        "BO-001",
+        "sess-1",
+        5000,
+        "https://example.com/return",
+      );
 
       expect(result).toEqual(mockResponse);
       expect(result.token).toBe("tok-abc");
@@ -110,7 +130,12 @@ describe("TransbankGateway", () => {
       globalThis.fetch = mockFetchError(500, "Internal Server Error");
 
       await expect(
-        gateway.createTransaction("BO-001", "sess-1", 5000, "https://example.com/return"),
+        gateway.createTransaction(
+          "BO-001",
+          "sess-1",
+          5000,
+          "https://example.com/return",
+        ),
       ).rejects.toThrow("[TransbankGateway] createTransaction falló (500)");
     });
 
@@ -118,7 +143,12 @@ describe("TransbankGateway", () => {
       globalThis.fetch = mockFetchNetworkError();
 
       await expect(
-        gateway.createTransaction("BO-001", "sess-1", 5000, "https://example.com/return"),
+        gateway.createTransaction(
+          "BO-001",
+          "sess-1",
+          5000,
+          "https://example.com/return",
+        ),
       ).rejects.toThrow();
     });
   });
@@ -147,7 +177,9 @@ describe("TransbankGateway", () => {
       expect(globalThis.fetch).toHaveBeenCalledOnce();
       const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0];
 
-      expect(url).toBe("https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions/tok-abc");
+      expect(url).toBe(
+        "https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions/tok-abc",
+      );
       expect(options.method).toBe("PUT");
       expect(options.headers).toEqual({
         "Tbk-Api-Key-Id": "test-commerce",
@@ -235,7 +267,9 @@ describe("TransbankGateway", () => {
 
       const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0];
 
-      expect(url).toBe("https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions/tok-abc");
+      expect(url).toBe(
+        "https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions/tok-abc",
+      );
       expect(options.method).toBe("GET");
       expect(options.headers).toEqual({
         "Tbk-Api-Key-Id": "test-commerce",
@@ -293,13 +327,20 @@ describe("TransbankGateway", () => {
       }));
 
       // Re-import to get fresh module with production env
-      const { TransbankGateway: ProdGateway } = await import("./TransbankGateway");
+      const { TransbankGateway: ProdGateway } = await import(
+        "./TransbankGateway"
+      );
       const prodGateway = new ProdGateway();
 
       const mockResponse = { token: "tok-abc", url: "https://example.com/pay" };
       globalThis.fetch = mockFetchSuccess(mockResponse);
 
-      await prodGateway.createTransaction("BO-001", "sess-1", 5000, "https://example.com/return");
+      await prodGateway.createTransaction(
+        "BO-001",
+        "sess-1",
+        5000,
+        "https://example.com/return",
+      );
 
       const [url] = vi.mocked(globalThis.fetch).mock.calls[0];
       expect(url).toContain("webpay3g.transbank.cl");

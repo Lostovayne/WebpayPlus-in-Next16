@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EmailProvider } from "@/features/auth/domain/email-provider";
 
 // ─── Env setup (before any imports) ────────────────────────────────────────────
@@ -18,9 +18,6 @@ vi.mock("@/shared/lib/logger", () => ({
     error: vi.fn(),
   },
 }));
-
-// Import the mocked logger for assertions
-import logger from "@/shared/lib/logger";
 
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -48,7 +45,10 @@ describe("withRetry", () => {
     vi.mocked(mockProvider.send).mockRejectedValue(new Error("Network error"));
 
     const { sendVerificationEmail } = await import("./email-service");
-    const promise = sendVerificationEmail("test@example.com", "http://localhost/verify");
+    const promise = sendVerificationEmail(
+      "test@example.com",
+      "http://localhost/verify",
+    );
 
     // Attach handler immediately to prevent Vitest unhandled rejection detection
     promise.catch(() => {});
@@ -61,7 +61,10 @@ describe("withRetry", () => {
   });
 
   it("succeeds on first attempt without retry", async () => {
-    vi.mocked(mockProvider.send).mockResolvedValue({ id: "email-123", provider: "mock" });
+    vi.mocked(mockProvider.send).mockResolvedValue({
+      id: "email-123",
+      provider: "mock",
+    });
 
     const { sendVerificationEmail } = await import("./email-service");
     await sendVerificationEmail("test@example.com", "http://localhost/verify");
@@ -74,7 +77,10 @@ describe("withRetry", () => {
       .mockResolvedValueOnce({ id: "email-123", provider: "mock" });
 
     const { sendVerificationEmail } = await import("./email-service");
-    const promise = sendVerificationEmail("test@example.com", "http://localhost/verify");
+    const promise = sendVerificationEmail(
+      "test@example.com",
+      "http://localhost/verify",
+    );
     await vi.advanceTimersByTimeAsync(1000);
     await promise;
 

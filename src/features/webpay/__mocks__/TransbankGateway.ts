@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 import type {
-  WebpayInitResponse,
   WebpayCommitResponse,
+  WebpayInitResponse,
   WebpayRefundResponse,
 } from "../infrastructure/TransbankGateway";
 import { TransbankAlreadyProcessedError } from "../infrastructure/TransbankGateway";
@@ -14,11 +14,25 @@ import { TransbankAlreadyProcessedError } from "../infrastructure/TransbankGatew
  */
 export class MockTransbankGateway {
   public createTransactionMock = vi.fn(
-    async (_buyOrder: string, _sessionId: string, _amount: number, _returnUrl: string): Promise<WebpayInitResponse> => ({ token: "", url: "" }),
+    async (
+      _buyOrder: string,
+      _sessionId: string,
+      _amount: number,
+      _returnUrl: string,
+    ): Promise<WebpayInitResponse> => ({ token: "", url: "" }),
   );
-  public commitTransactionMock = vi.fn(async (_token: string): Promise<WebpayCommitResponse> => ({} as WebpayCommitResponse));
-  public getTransactionStatusMock = vi.fn(async (_token: string): Promise<WebpayCommitResponse> => ({} as WebpayCommitResponse));
-  public requestRefundMock = vi.fn(async (_token: string, _amount: number): Promise<WebpayRefundResponse> => ({} as WebpayRefundResponse));
+  public commitTransactionMock = vi.fn(
+    async (_token: string): Promise<WebpayCommitResponse> =>
+      ({}) as WebpayCommitResponse,
+  );
+  public getTransactionStatusMock = vi.fn(
+    async (_token: string): Promise<WebpayCommitResponse> =>
+      ({}) as WebpayCommitResponse,
+  );
+  public requestRefundMock = vi.fn(
+    async (_token: string, _amount: number): Promise<WebpayRefundResponse> =>
+      ({}) as WebpayRefundResponse,
+  );
 
   async createTransaction(
     buyOrder: string,
@@ -37,7 +51,10 @@ export class MockTransbankGateway {
     return this.getTransactionStatusMock(token);
   }
 
-  async requestRefund(token: string, amount: number): Promise<WebpayRefundResponse> {
+  async requestRefund(
+    token: string,
+    amount: number,
+  ): Promise<WebpayRefundResponse> {
     return this.requestRefundMock(token, amount);
   }
 
@@ -51,7 +68,10 @@ export class MockTransbankGateway {
   }
 
   /** Configura respuesta exitosa de createTransaction */
-  mockCreateSuccess(token = "tok_test_123", url = "https://webpay3gint.transbank.cl/webpayserver/initTransaction") {
+  mockCreateSuccess(
+    token = "tok_test_123",
+    url = "https://webpay3gint.transbank.cl/webpayserver/initTransaction",
+  ) {
     this.createTransactionMock.mockResolvedValueOnce({ token, url });
   }
 
@@ -109,6 +129,8 @@ export class MockTransbankGateway {
 
   /** Configura error genérico de Transbank */
   mockNetworkError() {
-    this.commitTransactionMock.mockRejectedValueOnce(new Error("Network error"));
+    this.commitTransactionMock.mockRejectedValueOnce(
+      new Error("Network error"),
+    );
   }
 }

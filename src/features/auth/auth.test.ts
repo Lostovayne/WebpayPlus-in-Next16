@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ─── Mocks (BEFORE imports) ───────────────────────────────────────────────────
 
@@ -44,7 +44,11 @@ vi.mock("better-auth/plugins/multi-session", () => ({
 }));
 
 vi.mock("./infrastructure/upstash-secondary-storage", () => ({
-  createUpstashSecondaryStorage: vi.fn((url, token) => ({ type: "upstash", url, token })),
+  createUpstashSecondaryStorage: vi.fn((url, token) => ({
+    type: "upstash",
+    url,
+    token,
+  })),
 }));
 
 vi.mock("./infrastructure/email-service", () => ({
@@ -54,11 +58,6 @@ vi.mock("./infrastructure/email-service", () => ({
 }));
 
 // ─── Imports (after mocks) ───────────────────────────────────────────────────
-
-import { twoFactor } from "better-auth/plugins/two-factor";
-import { multiSession } from "better-auth/plugins/multi-session";
-import { prismaAdapter } from "better-auth/adapters/prisma";
-import { createUpstashSecondaryStorage } from "./infrastructure/upstash-secondary-storage";
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -92,7 +91,11 @@ describe("auth configuration", () => {
       multiSession: vi.fn(() => ({ name: "multiSession" })),
     }));
     vi.doMock("./infrastructure/upstash-secondary-storage", () => ({
-      createUpstashSecondaryStorage: vi.fn((url, token) => ({ type: "upstash", url, token })),
+      createUpstashSecondaryStorage: vi.fn((url, token) => ({
+        type: "upstash",
+        url,
+        token,
+      })),
     }));
     vi.doMock("./infrastructure/email-service", () => ({
       sendVerificationEmail: vi.fn(),
@@ -103,12 +106,22 @@ describe("auth configuration", () => {
 
   async function loadAuth() {
     const { twoFactor: tf } = await import("better-auth/plugins/two-factor");
-    const { multiSession: ms } = await import("better-auth/plugins/multi-session");
+    const { multiSession: ms } = await import(
+      "better-auth/plugins/multi-session"
+    );
     const { prismaAdapter: pa } = await import("better-auth/adapters/prisma");
-    const { createUpstashSecondaryStorage: cups } = await import("./infrastructure/upstash-secondary-storage");
+    const { createUpstashSecondaryStorage: cups } = await import(
+      "./infrastructure/upstash-secondary-storage"
+    );
     const { betterAuth } = await import("better-auth");
     await import("./auth");
-    return { betterAuth, twoFactor: tf, multiSession: ms, prismaAdapter: pa, createUpstashSecondaryStorage: cups };
+    return {
+      betterAuth,
+      twoFactor: tf,
+      multiSession: ms,
+      prismaAdapter: pa,
+      createUpstashSecondaryStorage: cups,
+    };
   }
 
   describe("BetterAuth is configured correctly", () => {
@@ -226,7 +239,11 @@ describe("auth configuration with Upstash", () => {
       multiSession: vi.fn(() => ({ name: "multiSession" })),
     }));
     vi.doMock("./infrastructure/upstash-secondary-storage", () => ({
-      createUpstashSecondaryStorage: vi.fn((url, token) => ({ type: "upstash", url, token })),
+      createUpstashSecondaryStorage: vi.fn((url, token) => ({
+        type: "upstash",
+        url,
+        token,
+      })),
     }));
     vi.doMock("./infrastructure/email-service", () => ({
       sendVerificationEmail: vi.fn(),
@@ -234,7 +251,9 @@ describe("auth configuration with Upstash", () => {
       sendPasswordResetEmail: vi.fn(),
     }));
 
-    const { createUpstashSecondaryStorage } = await import("./infrastructure/upstash-secondary-storage");
+    const { createUpstashSecondaryStorage } = await import(
+      "./infrastructure/upstash-secondary-storage"
+    );
     const { betterAuth } = await import("better-auth");
     await import("./auth");
 

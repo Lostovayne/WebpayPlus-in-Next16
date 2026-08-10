@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Prisma } from "generated/prisma";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 const { Decimal } = Prisma;
 
 // Mock external dependencies BEFORE imports
@@ -14,12 +15,16 @@ vi.mock("@/shared/lib/prisma", () => ({
 }));
 
 import { prisma } from "@/shared/lib/prisma";
-import { PrismaTransactionRepository } from "./PrismaTransactionRepository";
 import { WebpayTransaction } from "../domain/Transaction";
+import { PrismaTransactionRepository } from "./PrismaTransactionRepository";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function createPrismaRecord(overrides?: Partial<Parameters<PrismaTransactionRepository["save"]>[0]["props"]>) {
+function createPrismaRecord(
+  overrides?: Partial<
+    Parameters<PrismaTransactionRepository["save"]>[0]["props"]
+  >,
+) {
   return {
     id: "tx-001",
     buyOrder: "BO-123",
@@ -27,7 +32,8 @@ function createPrismaRecord(overrides?: Partial<Parameters<PrismaTransactionRepo
     amount: new Decimal(5000),
     status: "INITIALIZED",
     token: "tok-123",
-    paymentUrl: "https://webpay3gint.transbank.cl/webpayserver/init_transaction",
+    paymentUrl:
+      "https://webpay3gint.transbank.cl/webpayserver/init_transaction",
     vci: "TSO",
     cardNumber: "1234",
     accountingDate: "0101",
@@ -58,7 +64,9 @@ describe("PrismaTransactionRepository", () => {
 
   describe("findByToken", () => {
     it("returns null when no record is found", async () => {
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(null as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        null as never,
+      );
 
       const result = await repo.findByToken("nonexistent-token");
 
@@ -70,7 +78,9 @@ describe("PrismaTransactionRepository", () => {
 
     it("returns a domain entity when a record is found", async () => {
       const record = createPrismaRecord();
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       const result = await repo.findByToken("tok-123");
 
@@ -87,7 +97,9 @@ describe("PrismaTransactionRepository", () => {
 
   describe("findByBuyOrder", () => {
     it("returns null when no record is found", async () => {
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(null as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        null as never,
+      );
 
       const result = await repo.findByBuyOrder("BO-nonexistent");
 
@@ -99,7 +111,9 @@ describe("PrismaTransactionRepository", () => {
 
     it("returns a domain entity when found", async () => {
       const record = createPrismaRecord({ buyOrder: "BO-999" });
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       const result = await repo.findByBuyOrder("BO-999");
 
@@ -112,7 +126,7 @@ describe("PrismaTransactionRepository", () => {
 
   describe("save", () => {
     it("calls upsert with correct data on create", async () => {
-      vi.mocked(prisma.webpayTransaction.upsert).mockResolvedValue({} as any);
+      vi.mocked(prisma.webpayTransaction.upsert).mockResolvedValue({} as never);
 
       const tx = WebpayTransaction.initialize("BO-123", "session-abc", 5000);
       tx.setToken("tok-new");
@@ -132,7 +146,7 @@ describe("PrismaTransactionRepository", () => {
     });
 
     it("calls upsert with update fields on save", async () => {
-      vi.mocked(prisma.webpayTransaction.upsert).mockResolvedValue({} as any);
+      vi.mocked(prisma.webpayTransaction.upsert).mockResolvedValue({} as never);
 
       const tx = WebpayTransaction.initialize("BO-123", "session-abc", 5000);
       tx.setToken("tok-1");
@@ -172,7 +186,9 @@ describe("PrismaTransactionRepository", () => {
   describe("toDomain mapper", () => {
     it("maps INITIALIZED status correctly", async () => {
       const record = createPrismaRecord({ status: "INITIALIZED" });
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       const result = await repo.findByToken("tok-123");
 
@@ -186,7 +202,9 @@ describe("PrismaTransactionRepository", () => {
         cardNumber: "1234",
         transactionDate: new Date("2025-06-27T10:00:00Z"),
       });
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       const result = await repo.findByToken("tok-123");
 
@@ -197,7 +215,9 @@ describe("PrismaTransactionRepository", () => {
 
     it("maps REJECTED status correctly", async () => {
       const record = createPrismaRecord({ status: "REJECTED" });
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       const result = await repo.findByToken("tok-123");
 
@@ -209,7 +229,9 @@ describe("PrismaTransactionRepository", () => {
         status: "ABORTED",
         abortedReason: "User cancelled",
       });
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       const result = await repo.findByToken("tok-123");
 
@@ -219,7 +241,9 @@ describe("PrismaTransactionRepository", () => {
 
     it("maps FAILED status correctly", async () => {
       const record = createPrismaRecord({ status: "FAILED" });
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       const result = await repo.findByToken("tok-123");
 
@@ -228,7 +252,9 @@ describe("PrismaTransactionRepository", () => {
 
     it("maps REVERSED status correctly", async () => {
       const record = createPrismaRecord({ status: "REVERSED" });
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       const result = await repo.findByToken("tok-123");
 
@@ -236,8 +262,10 @@ describe("PrismaTransactionRepository", () => {
     });
 
     it("throws on invalid status from DB", async () => {
-      const record = createPrismaRecord({ status: "CORRUPTED" } as any);
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      const record = createPrismaRecord({ status: "CORRUPTED" } as never);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       await expect(repo.findByToken("tok-123")).rejects.toThrow(
         'Corrupted transaction status in DB: "CORRUPTED" for id=tx-001',
@@ -260,7 +288,9 @@ describe("PrismaTransactionRepository", () => {
         polledAt: null,
         paymentUrl: null,
       });
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       const result = await repo.findByToken("tok-123");
 
@@ -284,7 +314,9 @@ describe("PrismaTransactionRepository", () => {
         amount: new Decimal(99999.99),
         installmentsAmount: new Decimal(33333.33),
       });
-      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(record as any);
+      vi.mocked(prisma.webpayTransaction.findUnique).mockResolvedValue(
+        record as never,
+      );
 
       const result = await repo.findByToken("tok-123");
 
@@ -305,7 +337,8 @@ describe("PrismaTransactionRepository", () => {
       await repo.findStaleInitialized(10);
 
       expect(prisma.webpayTransaction.findMany).toHaveBeenCalledOnce();
-      const call = vi.mocked(prisma.webpayTransaction.findMany).mock.calls[0][0];
+      const call = vi.mocked(prisma.webpayTransaction.findMany).mock
+        .calls[0][0];
 
       expect(call.where).toEqual({
         status: "INITIALIZED",
@@ -316,13 +349,14 @@ describe("PrismaTransactionRepository", () => {
       expect(call.take).toBe(50);
 
       // Verify createdAt cutoff is roughly 10 minutes ago (within 1s tolerance)
-      const createdAtCutoff = (call.where as any).createdAt.lt as Date;
+      const createdAtCutoff = (call.where as never).createdAt.lt as Date;
       const diff = now - createdAtCutoff.getTime();
       expect(diff).toBeGreaterThanOrEqual(10 * 60 * 1000 - 1000);
       expect(diff).toBeLessThanOrEqual(10 * 60 * 1000 + 1000);
 
       // Verify polledAt cutoff is roughly 5 minutes ago
-      const polledAtCutoff = ((call.where as any).OR[1] as any).polledAt.lt as Date;
+      const polledAtCutoff = ((call.where as never).OR[1] as never).polledAt
+        .lt as Date;
       const pollDiff = now - polledAtCutoff.getTime();
       expect(pollDiff).toBeGreaterThanOrEqual(5 * 60 * 1000 - 1000);
       expect(pollDiff).toBeLessThanOrEqual(5 * 60 * 1000 + 1000);
@@ -333,7 +367,9 @@ describe("PrismaTransactionRepository", () => {
         createPrismaRecord({ id: "tx-1", buyOrder: "BO-1" }),
         createPrismaRecord({ id: "tx-2", buyOrder: "BO-2" }),
       ];
-      vi.mocked(prisma.webpayTransaction.findMany).mockResolvedValue(records as any);
+      vi.mocked(prisma.webpayTransaction.findMany).mockResolvedValue(
+        records as never,
+      );
 
       const results = await repo.findStaleInitialized(10);
 
@@ -357,7 +393,9 @@ describe("PrismaTransactionRepository", () => {
         new Error("Query timeout"),
       );
 
-      await expect(repo.findStaleInitialized(10)).rejects.toThrow("Query timeout");
+      await expect(repo.findStaleInitialized(10)).rejects.toThrow(
+        "Query timeout",
+      );
     });
   });
 });

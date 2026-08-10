@@ -1,4 +1,4 @@
-import { WebpayTransaction, TransactionStatus } from "../domain/Transaction";
+import { type WebpayTransaction } from "../domain/Transaction";
 
 /**
  * Mock del TransactionRepository para tests.
@@ -27,7 +27,9 @@ export class MockTransactionRepository {
     return null;
   }
 
-  async findStaleInitialized(olderThanMinutes: number): Promise<WebpayTransaction[]> {
+  async findStaleInitialized(
+    olderThanMinutes: number,
+  ): Promise<WebpayTransaction[]> {
     const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000);
     return Array.from(this.store.values()).filter(
       (tx) =>

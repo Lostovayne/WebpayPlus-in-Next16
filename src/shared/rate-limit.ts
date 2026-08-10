@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
-import { env } from "@/shared/env";
+import { type NextRequest, NextResponse } from "next/server";
 import type { RateLimitGateway } from "@/features/rate-limit/domain/RateLimitGateway";
 import { MemoryRateLimitGateway } from "@/features/rate-limit/infrastructure/MemoryRateLimitGateway";
+import { env } from "@/shared/env";
 
 // ─── Singleton Gateway ──────────────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ export function getClientIp(req: NextRequest): string {
  * @returns NextResponse — either the handler result or a 429 response.
  */
 export async function rateLimitOrProceed(
-  req: NextRequest,
+  _req: NextRequest,
   key: string,
   window = DEFAULT_WINDOW,
   limit = DEFAULT_LIMIT,
@@ -69,7 +69,10 @@ export async function rateLimitOrProceed(
   const result = await gw.check(key, window, limit);
 
   if (!result.success) {
-    const retryAfter = Math.max(0, result.reset - Math.floor(Date.now() / 1000));
+    const retryAfter = Math.max(
+      0,
+      result.reset - Math.floor(Date.now() / 1000),
+    );
 
     return NextResponse.json(
       {
